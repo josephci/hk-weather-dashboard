@@ -313,6 +313,18 @@
     </div>
   </section>
 
+  <section class="ladder-panel">
+    <div class="panel-title" id="tomorrowTitle">明日高溫預測（6模型）</div>
+    <div class="stats-row" style="margin-top:0;padding-top:0;border-top:none;margin-bottom:12px;">
+      <div class="stat"><div class="k" id="tmrMean">--°</div><div class="v">平均</div></div>
+      <div class="stat"><div class="k" id="tmrStd">--°</div><div class="v">標準差</div></div>
+      <div class="stat"><div class="k" id="tmrSpread">--°</div><div class="v">分歧</div></div>
+    </div>
+    <div id="tomorrowList">
+      <div class="ladder-item"><span class="ladder-range">--</span><div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:0%"></div></div><span class="ladder-prob">--%</span></div>
+    </div>
+  </section>
+
   <footer>
     <button class="refresh" id="refreshBtn">手動重新整理</button>
     <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo</div>
@@ -457,6 +469,81 @@ function hkHour() {
   return (new Date().getUTCHours() + 8) % 24;
 }
 
+// ============================================================
+// 明日高溫預測（純模型，冇已實現數據可用）
+// ============================================================
+async function pollTomorrow() {
+  try {
+    const field = 'temperature_2m_max';
+    const tmr = new Date(Date.now() + 24*3600*1000);
+    // 用香港時區計「聽日」日期（避免UTC午夜前後偏差）
+    const hkNow = new Date(Date.now() + 8*3600*1000);
+    const hkTmr = new Date(hkNow.getTime() + 24*3600*1000);
+    const dateStr = hkTmr.toISOString().slice(0, 10);
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&daily=${field}&timezone=auto&models=${MODELS.join(',')}&start_date=${dateStr}&end_date=${dateStr}` +
+      `&_=${Date.now()}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Open-Meteo ' + res.status);
+    const data = await res.json();
+
+    let bias = {};
+    if (BIAS_URL) {
+      try {
+        const bRes = await fetch(BIAS_URL + '?_=' + Date.now(), { cache: 'no-store' });
+        if (bRes.ok) bias = (await bRes.json())['max'] || {};
+      } catch { /* 冇bias就照跑 */ }
+    }
+
+    const values = [];
+    for (const model of MODELS) {
+      const arr = data.daily?.[`${field}_${model}`];
+      if (arr && arr[0] != null) values.push(arr[0] + (bias[model] || 0));
+    }
+    if (values.length < 2) throw new Error('可用模型太少');
+
+    const n = values.length;
+    const mean = values.reduce((a,b)=>a+b,0)/n;
+    const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
+    const std = Math.sqrt(variance);
+    const spread = Math.max(...values) - Math.min(...values);
+
+    document.getElementById('tmrMean').textContent = mean.toFixed(1)+'°';
+    document.getElementById('tmrStd').textContent = std.toFixed(1)+'°';
+    document.getElementById('tmrSpread').textContent = spread.toFixed(1)+'°';
+
+    const [y, m, d] = dateStr.split('-');
+    document.getElementById('tomorrowTitle').textContent =
+      `明日（${parseInt(m)}月${parseInt(d)}日）高溫預測 · ${n}模型` + (spread >= 1 ? ' ⚠分歧較大' : '');
+
+    // 完整機率分佈：顯示所有 >=2% 嘅bucket（唔止3個，方便你對照Polymarket成張表）
+    const range = Math.max(4*std, 3);
+    const lo = Math.floor(mean-range), hi = Math.ceil(mean+range);
+    const buckets = [];
+    for (let b = lo; b < hi; b++) {
+      const p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+      if (p >= 0.02) buckets.push({ low: b, prob: p });
+    }
+
+    const listEl = document.getElementById('tomorrowList');
+    listEl.innerHTML = '';
+    const maxProb = Math.max(...buckets.map(b=>b.prob));
+    buckets.forEach(b => {
+      const item = document.createElement('div');
+      item.className = 'ladder-item';
+      item.innerHTML = `
+        <span class="ladder-range">${b.low}°C</span>
+        <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>
+        <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
+      `;
+      listEl.appendChild(item);
+    });
+  } catch (e) {
+    document.getElementById('tomorrowTitle').textContent = '明日預測暫時攞唔到：' + e.message;
+  }
+}
+
 // 計算bucket機率：模型分佈 + 已實現高溫做條件化
 // 核心邏輯：最終max = max(已實現, 之後仲會升到嘅溫度)
 //   - 低過已實現高溫嘅bucket → 機率0（已經唔可能）
@@ -520,30 +607,24 @@ function renderForecast() {
   const { buckets, conditioned } = computeBuckets();
   if (buckets.length === 0) return;
 
-  // 搵機率總和最高嘅3個相鄰bucket
-  let best = { i: 0, sum: -1 };
-  for (let i = 0; i <= buckets.length - 3; i++) {
-    const s = buckets[i].prob + buckets[i+1].prob + buckets[i+2].prob;
-    if (s > best.sum) best = { i, sum: s };
-  }
-  const ladder = buckets.slice(best.i, best.i + 3);
-
   // 標題提示：已條件化（結合已實現高溫）
   const titleEl = document.querySelector('.ladder-panel .panel-title');
   if (titleEl) {
     titleEl.textContent = conditioned
-      ? `階梯建議（已結合今日實測高溫 ${todayMaxRealized.toFixed(1)}°）`
-      : '階梯建議（機率最高嘅3個相鄰區間）';
+      ? `今日高溫機率（已結合實測高溫 ${todayMaxRealized.toFixed(1)}°）`
+      : '今日高溫機率（6模型）';
   }
 
+  // Polymarket格式：逐格獨立顯示，所有>=2%嘅bucket
+  const shown = buckets.filter(b => b.prob >= 0.02);
   const listEl = document.getElementById('ladderList');
   listEl.innerHTML = '';
-  const maxProb = Math.max(...ladder.map(b=>b.prob));
-  ladder.forEach(b => {
+  const maxProb = Math.max(...shown.map(b=>b.prob));
+  shown.forEach(b => {
     const item = document.createElement('div');
     item.className = 'ladder-item';
     item.innerHTML = `
-      <span class="ladder-range">${b.range}C</span>
+      <span class="ladder-range">${b.low}°C</span>
       <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${maxProb > 0 ? (b.prob/maxProb*100).toFixed(0) : 0}%"></div></div>
       <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
     `;
@@ -570,12 +651,14 @@ function tickClock() {
 }
 setInterval(tickClock, 1000); tickClock();
 
-document.getElementById('refreshBtn').addEventListener('click', () => { pollLive(); pollForecast(); });
+document.getElementById('refreshBtn').addEventListener('click', () => { pollLive(); pollForecast(); pollTomorrow(); });
 
 pollLive();
 pollForecast();
+pollTomorrow();
 setInterval(pollLive, LIVE_POLL_MS);
 setInterval(pollForecast, FORECAST_POLL_MS);
+setInterval(pollTomorrow, FORECAST_POLL_MS);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') { pollLive(); }

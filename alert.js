@@ -107,6 +107,7 @@ async function fetchPolymarketHKTemp(dateStr) {
     if (!target) return null;
 
     const lines = [];
+    const buckets = [];
     for (const mkt of target.markets || []) {
       // outcomePrices 通常係 '["0.12","0.88"]' 字串
       let yesPrice = null;
@@ -115,18 +116,137 @@ async function fetchPolymarketHKTemp(dateStr) {
         yesPrice = prices[0] !== undefined ? Math.round(parseFloat(prices[0]) * 100) : null;
       } catch { /* ignore */ }
       const label = (mkt.groupItemTitle || mkt.question || "?").trim();
-      if (yesPrice !== null) lines.push(`  ${label}: ${yesPrice}¢`);
+      if (yesPrice !== null) {
+        lines.push(`  ${label}: ${yesPrice}¢`);
+        buckets.push({ label, yesPrice });
+      }
     }
 
     return {
       title: target.title,
       url: `https://polymarket.com/event/${target.slug}`,
       priceLines: lines,
+      buckets,
     };
   } catch (e) {
     console.error("Polymarket查詢失敗（唔影響警報）:", e.message);
     return null;
   }
+}
+
+// ---------- 天文台警告（模組2：惡劣天氣=模型不可信） ----------
+const WARNSUM_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=warnsum&lang=tc";
+// 影響溫度預測可靠度嘅警告類型
+const MODEL_RISK_WARNINGS = {
+  WTCSGNL: "熱帶氣旋警告",
+  WTS: "雷暴警告",
+  WRAIN: "暴雨警告",
+};
+
+async function fetchActiveWarnings() {
+  try {
+    const res = await fetch(WARNSUM_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`warnsum ${res.status}`);
+    const json = await res.json();
+    const active = [];
+    for (const [code, label] of Object.entries(MODEL_RISK_WARNINGS)) {
+      const w = json[code];
+      if (w && w.actionCode !== "CANCEL") {
+        active.push({ code, label, name: w.name || label });
+      }
+    }
+    return active;
+  } catch (e) {
+    console.error("警告查詢失敗（唔影響主流程）:", e.message);
+    return [];
+  }
+}
+
+// ---------- 模型機率（模組1：Edge Scanner基礎） ----------
+const LAT = 22.302, LON = 114.174;
+const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
+const BIAS_FILE = path.join(__dirname, "bias.json");
+const EDGE_THRESHOLD = 10; // 百分點：模型機率同市場價差呢個數先算有edge
+const STD_INFLATE_ON_WARNING = 1.8; // 有惡劣天氣警告時,std放大倍數（肥尾修正）
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t = 1/(1+p*x);
+  return sign * (1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));
+}
+function normalCdf(x, mean, std) {
+  if (std === 0) return x >= mean ? 1 : 0;
+  return 0.5*(1+erf((x-mean)/(std*Math.SQRT2)));
+}
+
+function loadBias() {
+  if (!fs.existsSync(BIAS_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(BIAS_FILE, "utf-8")).max || {}; } catch { return {}; }
+}
+
+// 計今日高溫嘅逐度機率分佈（結合bias校正+已實現高溫+時間衰減+警告放大std）
+async function computeModelProbs(todayStr, todayMax, hourHK, hasWarning) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+    `&daily=temperature_2m_max&timezone=auto&models=${MODELS.join(",")}` +
+    `&start_date=${todayStr}&end_date=${todayStr}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
+  const data = await res.json();
+
+  const bias = loadBias();
+  const values = [];
+  for (const m of MODELS) {
+    const arr = data.daily?.[`temperature_2m_max_${m}`];
+    if (arr && arr[0] != null) values.push(arr[0] + (bias[m] || 0));
+  }
+  if (values.length < 2) return null;
+
+  const n = values.length;
+  const mean = values.reduce((a,b)=>a+b,0)/n;
+  let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
+  std = Math.max(std, 0.4); // std下限:模型過度一致都唔好過份自信
+  if (hasWarning) std *= STD_INFLATE_ON_WARNING;
+
+  // 時間衰減：夜晚再破新高機會微
+  let upsideFactor = 1;
+  if (todayMax !== null) {
+    if (hourHK >= 17 || hourHK < 6) upsideFactor = 0.03;
+    else if (hourHK >= 14) upsideFactor = 1 - (hourHK - 14) / 3 * 0.8;
+  }
+
+  // 建逐度機率map（18°C到40°C，夠涵蓋香港所有情況）
+  const probs = {};
+  const fb = todayMax !== null ? Math.floor(todayMax) : null;
+  for (let b = 18; b <= 40; b++) {
+    let p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+    if (fb !== null) {
+      if (b < fb) p = 0;
+      else if (b === fb) p = normalCdf(b+1, mean, std);
+      else p = p * upsideFactor;
+    }
+    probs[b] = p;
+  }
+  const total = Object.values(probs).reduce((a,b)=>a+b,0);
+  if (total > 0) for (const k of Object.keys(probs)) probs[k] /= total;
+
+  return { probs, mean, std };
+}
+
+// 將Polymarket bucket標籤（"31°C"/"34°C or higher"/"24°C or below"）map去模型機率
+function bucketModelProb(label, probs) {
+  const t = label.toLowerCase();
+  const numMatch = t.match(/(\d+)/);
+  if (!numMatch) return null;
+  const deg = parseInt(numMatch[1], 10);
+  const sum = (from, to) => {
+    let s = 0;
+    for (let b = from; b <= to; b++) s += probs[b] || 0;
+    return s;
+  };
+  if (t.includes("higher") || t.includes("above")) return sum(deg, 40);
+  if (t.includes("below") || t.includes("lower")) return sum(18, deg);
+  return probs[deg] ?? null;
 }
 
 // ---------- 主邏輯 ----------
@@ -147,7 +267,7 @@ async function main() {
 
   // 新一日reset（香港時間過咗午夜，today max/min重新開始）
   if (isNewDay) {
-    Object.assign(state, { date: today, prevCurrent: null, prevMax: null, alertedFloors: [], approachAlerted: null, pulledBackAlerted: false });
+    Object.assign(state, { date: today, prevCurrent: null, prevMax: null, alertedFloors: [], approachAlerted: null, pulledBackAlerted: false, edgeAlerted: {} });
   }
 
   const events = [];
@@ -192,6 +312,61 @@ async function main() {
     }
   }
 
+  // E: 惡劣天氣警告變化（模型可信度警示）
+  const warnings = await fetchActiveWarnings();
+  const warnCodes = warnings.map((w) => w.code).sort().join(",");
+  const hasWarning = warnings.length > 0;
+  if (warnCodes !== (state.lastWarnCodes ?? "")) {
+    if (hasWarning) {
+      events.push(
+        `⚠️ <b>惡劣天氣警告生效</b>：${warnings.map((w) => w.name).join("、")}\n→ 呢啲日子模型可靠度低（可錯3-5σ），edge計算已自動放大不確定性，建議減注`
+      );
+    } else if (state.lastWarnCodes) {
+      events.push(`✅ <b>天氣警告已解除</b>，模型可靠度回復正常`);
+    }
+    state.lastWarnCodes = warnCodes;
+  }
+
+  // F: Edge Scanner（模型機率 vs 市場價，日間先掃）
+  const hourHK = parseInt(recordTime.slice(11, 13), 10);
+  let market = null;
+  if (hourHK >= 7 && hourHK < 17) {
+    try {
+      market = await fetchPolymarketHKTemp(today);
+      if (market && market.buckets.length > 0) {
+        const model = await computeModelProbs(today, todayMax, hourHK, hasWarning);
+        if (model) {
+          const edgeAlerted = state.edgeAlerted || {};
+          const edgeLines = [];
+          for (const b of market.buckets) {
+            const mp = bucketModelProb(b.label, model.probs);
+            if (mp === null) continue;
+            const modelPct = Math.round(mp * 100);
+            const edge = modelPct - b.yesPrice;
+            if (Math.abs(edge) >= EDGE_THRESHOLD) {
+              // 去重：同一bucket，edge變化<8個百分點就唔再嘈
+              const last = edgeAlerted[b.label];
+              if (last === undefined || Math.abs(edge - last) >= 8) {
+                const dir = edge > 0 ? "買Yes（市場低估）" : "買No（市場高估）";
+                edgeLines.push(`  ${b.label}: 模型${modelPct}% vs 市場${b.yesPrice}¢ → <b>${edge > 0 ? "+" : ""}${edge}%</b> ${dir}`);
+                edgeAlerted[b.label] = edge;
+              }
+            } else if (edgeAlerted[b.label] !== undefined) {
+              delete edgeAlerted[b.label]; // edge消失,重置,下次再現先再通知
+            }
+          }
+          state.edgeAlerted = edgeAlerted;
+          if (edgeLines.length > 0) {
+            const warnNote = hasWarning ? "（⚠️警告生效中,std已放大,edge打咗折先出現,更可信但仍要小心）" : "";
+            events.push(`💰 <b>Edge偵測</b>${warnNote}\n模型: 平均${model.mean.toFixed(1)}° σ${model.std.toFixed(1)}°\n${edgeLines.join("\n")}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Edge scan失敗（唔影響其他警報）:", e.message);
+    }
+  }
+
   // 記錄歷史（每次run都記，方便日後覆盤）
   appendHistory(recordTime, current, todayMax, todayMin);
 
@@ -200,7 +375,7 @@ async function main() {
 
     // 附上當日Polymarket市場連結+現價（一撳直達，慳走搵market嘅時間）
     let marketBlock = "";
-    const market = await fetchPolymarketHKTemp(today);
+    if (!market) market = await fetchPolymarketHKTemp(today);
     if (market) {
       marketBlock = `\n\n📊 <b>${market.title}</b>`;
       if (market.priceLines.length > 0) marketBlock += `\n${market.priceLines.join("\n")}`;

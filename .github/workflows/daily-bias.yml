@@ -1,0 +1,47 @@
+name: Daily Bias Pipeline
+
+on:
+  schedule:
+    - cron: "15 23 * * *" # UTC 23:15 = 香港07:15，記錄今日模型預測
+    - cron: "45 15 * * *" # UTC 15:45 = 香港23:45，記錄今日實測+重計bias
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "forecast 或 settle"
+        required: true
+        default: "forecast"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 決定模式
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+          elif [ "$(date -u +%H)" = "23" ]; then
+            echo "mode=forecast" >> $GITHUB_OUTPUT
+          else
+            echo "mode=settle" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 執行
+        run: node daily_log.js --mode=${{ steps.mode.outputs.mode }}
+
+      - name: Commit記錄
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          git add forecast_log.csv bias.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: daily bias log (${{ steps.mode.outputs.mode }}) [skip ci]"
+          git push

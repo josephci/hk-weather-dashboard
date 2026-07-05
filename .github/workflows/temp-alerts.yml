@@ -1,0 +1,33 @@
+name: HK Temp Alerts
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # 每5分鐘（GitHub高峰期可能delay幾分鐘）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 執行溫度警報偵測
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node alert.js
+
+      - name: 儲存 state + 歷史紀錄
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          git add alert_state.json history.csv
+          git diff --staged --quiet || git commit -m "chore: temp log $(date -u +%H:%M) [skip ci]"
+          git push

@@ -380,6 +380,10 @@ async function pollLive() {
     if (json.today && !json.todayError) {
       document.getElementById('todayMax').textContent = (json.today.max ?? '--').toString() + '°';
       document.getElementById('todayMin').textContent = (json.today.min ?? '--').toString() + '°';
+      if (typeof json.today.max === 'number') {
+        todayMaxRealized = json.today.max;
+        renderForecast(); // 已實現高溫更新咗，重新計算階梯
+      }
     }
 
     lastRecordTime = json.live.recordTime;
@@ -406,6 +410,7 @@ function formatRelativeTime(iso) {
 // 多模型預報 + 機率分析
 // ============================================================
 let forecastState = null;
+let todayMaxRealized = null; // 今日已實現嘅最高溫（由pollLive更新）
 
 async function pollForecast() {
   try {
@@ -439,21 +444,7 @@ async function pollForecast() {
     const std = Math.sqrt(variance);
     const spread = Math.max(...values) - Math.min(...values);
 
-    const range = Math.max(4*std, 3);
-    const lo = Math.floor(mean-range), hi = Math.ceil(mean+range);
-    const buckets = [];
-    for (let b = lo; b < hi; b++) {
-      const p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
-      buckets.push({ range: `${b}–${b+1}°`, low: b, prob: p });
-    }
-    let best = { i: 0, sum: -1 };
-    for (let i = 0; i <= buckets.length - 3; i++) {
-      const s = buckets[i].prob + buckets[i+1].prob + buckets[i+2].prob;
-      if (s > best.sum) best = { i, sum: s };
-    }
-    const ladder = buckets.slice(best.i, best.i + 3);
-
-    forecastState = { mean, std, spread, low: mean - 3*std, high: mean + 3*std, ladder };
+    forecastState = { mean, std, spread, low: mean - 3*std, high: mean + 3*std };
     renderForecast();
     clearError();
   } catch (e) {
@@ -461,9 +452,61 @@ async function pollForecast() {
   }
 }
 
+// 而家香港時間幾多點（0-23）
+function hkHour() {
+  return (new Date().getUTCHours() + 8) % 24;
+}
+
+// 計算bucket機率：模型分佈 + 已實現高溫做條件化
+// 核心邏輯：最終max = max(已實現, 之後仲會升到嘅溫度)
+//   - 低過已實現高溫嘅bucket → 機率0（已經唔可能）
+//   - 含已實現高溫嘅bucket → 收晒「模型話會低過呢度」嘅機率（因為條底已經封咗）
+//   - 高過嘅bucket → 跟返模型分佈，但夜晚會大幅縮（日落後升溫機會微）
+function computeBuckets() {
+  if (!forecastState) return { buckets: [], conditioned: false };
+  const { mean, std } = forecastState;
+
+  const range = Math.max(4*std, 3);
+  let lo = Math.floor(mean - range), hi = Math.ceil(mean + range);
+
+  const rm = todayMaxRealized;
+  const conditioned = rm !== null && METRIC === 'max';
+  if (conditioned) {
+    lo = Math.max(lo, Math.floor(rm));
+    hi = Math.max(hi, Math.floor(rm) + 2); // 至少顯示realized bucket+上一格
+  }
+
+  // 夜晚時間衰減：日落後再破新高機會極微
+  //   <14:00 唔調整；14:00-17:00 上行空間逐步縮；>=17:00 幾乎鎖定
+  const h = hkHour();
+  let upsideFactor = 1;
+  if (conditioned) {
+    if (h >= 17 || h < 6) upsideFactor = 0.03;
+    else if (h >= 14) upsideFactor = 1 - (h - 14) / 3 * 0.8; // 14點=1 → 17點=0.2
+  }
+
+  const buckets = [];
+  for (let b = lo; b < hi; b++) {
+    let p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+    if (conditioned) {
+      const fb = Math.floor(rm);
+      if (b < fb) p = 0;
+      else if (b === fb) p = normalCdf(b+1, mean, std); // 收晒下面所有機率
+      else p = (normalCdf(b+1, mean, std) - normalCdf(b, mean, std)) * upsideFactor;
+    }
+    buckets.push({ range: `${b}–${b+1}°`, low: b, prob: p });
+  }
+
+  // 條件化之後重新歸一（令總和=100%）
+  const total = buckets.reduce((a,b)=>a+b.prob,0);
+  if (total > 0) buckets.forEach(b => b.prob = b.prob/total);
+
+  return { buckets, conditioned };
+}
+
 function renderForecast() {
   if (!forecastState) return;
-  const { mean, std, spread, low, high, ladder } = forecastState;
+  const { mean, std, spread, low, high } = forecastState;
 
   document.getElementById('statMean').textContent = mean.toFixed(1)+'°';
   document.getElementById('statStd').textContent = std.toFixed(1)+'°';
@@ -474,6 +517,25 @@ function renderForecast() {
   const flagEl = document.getElementById('spreadFlag');
   flagEl.textContent = spread >= 1 ? '⚠ 分歧較大' : '';
 
+  const { buckets, conditioned } = computeBuckets();
+  if (buckets.length === 0) return;
+
+  // 搵機率總和最高嘅3個相鄰bucket
+  let best = { i: 0, sum: -1 };
+  for (let i = 0; i <= buckets.length - 3; i++) {
+    const s = buckets[i].prob + buckets[i+1].prob + buckets[i+2].prob;
+    if (s > best.sum) best = { i, sum: s };
+  }
+  const ladder = buckets.slice(best.i, best.i + 3);
+
+  // 標題提示：已條件化（結合已實現高溫）
+  const titleEl = document.querySelector('.ladder-panel .panel-title');
+  if (titleEl) {
+    titleEl.textContent = conditioned
+      ? `階梯建議（已結合今日實測高溫 ${todayMaxRealized.toFixed(1)}°）`
+      : '階梯建議（機率最高嘅3個相鄰區間）';
+  }
+
   const listEl = document.getElementById('ladderList');
   listEl.innerHTML = '';
   const maxProb = Math.max(...ladder.map(b=>b.prob));
@@ -482,7 +544,7 @@ function renderForecast() {
     item.className = 'ladder-item';
     item.innerHTML = `
       <span class="ladder-range">${b.range}C</span>
-      <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>
+      <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${maxProb > 0 ? (b.prob/maxProb*100).toFixed(0) : 0}%"></div></div>
       <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
     `;
     listEl.appendChild(item);

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="HK溫度站" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>HK溫度站 · 即時觀測儀</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0B1220;
+    --panel: #121B2E;
+    --panel-border: #1F2C46;
+    --text: #E8EDF5;
+    --muted: #7C8AA5;
+    --brass: #C89B3C;
+    --warm: #D9734E;
+    --cool: #5FA8D3;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --sans: 'Inter', -apple-system, system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: radial-gradient(ellipse at top, #101B30 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .wrap {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: env(safe-area-inset-top, 24px) 18px calc(env(safe-area-inset-bottom, 24px) + 12px);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-top: 8px;
+  }
+  .brand {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .brand strong { color: var(--brass); }
+  .clock {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .live-panel {
+    background: linear-gradient(180deg, var(--panel) 0%, #0F1728 100%);
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    padding: 28px 22px 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .live-panel::before {
+    content: "";
+    position: absolute;
+    top: -60px; right: -60px;
+    width: 180px; height: 180px;
+    background: radial-gradient(circle, rgba(200,155,60,0.14) 0%, transparent 70%);
+  }
+  .live-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--brass);
+    box-shadow: 0 0 0 0 rgba(200,155,60,0.5);
+    animation: pulse 2.4s ease-out infinite;
+  }
+  .live-dot.stale { background: var(--muted); animation: none; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(200,155,60,0.45); }
+    70% { box-shadow: 0 0 0 10px rgba(200,155,60,0); }
+    100% { box-shadow: 0 0 0 0 rgba(200,155,60,0); }
+  }
+  .live-label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .temp-value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 76px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .temp-value .unit { font-size: 32px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .station-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .station-line .place { color: var(--text); font-weight: 500; }
+
+  .gauge-panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    padding: 20px;
+  }
+  .panel-title {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .panel-title .flag {
+    color: var(--warm);
+  }
+  .gauge-track {
+    position: relative;
+    height: 10px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--cool), var(--brass), var(--warm));
+    opacity: 0.35;
+    margin: 18px 0 8px;
+  }
+  .gauge-needle {
+    position: absolute;
+    top: -6px;
+    width: 3px;
+    height: 22px;
+    background: var(--text);
+    border-radius: 2px;
+    transform: translateX(-50%);
+    transition: left 0.6s ease;
+  }
+  .gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .stats-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--panel-border);
+  }
+  .stat { text-align: center; flex: 1; }
+  .stat .k { font-family: var(--mono); font-size: 18px; font-weight: 600; }
+  .stat .v { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+
+  .ladder-panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    padding: 20px;
+    flex: 1;
+  }
+  .ladder-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .ladder-item:last-child { border-bottom: none; }
+  .ladder-range {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 600;
+    width: 92px;
+    flex-shrink: 0;
+  }
+  .ladder-bar-track {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: #1A2540;
+    overflow: hidden;
+  }
+  .ladder-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--brass), #E0B968);
+    border-radius: 4px;
+    transition: width 0.6s ease;
+  }
+  .ladder-prob {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--muted);
+    width: 46px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  footer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    padding-top: 4px;
+  }
+  .error-banner {
+    background: rgba(217,115,78,0.12);
+    border: 1px solid rgba(217,115,78,0.35);
+    color: var(--warm);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 12px;
+    display: none;
+  }
+  .error-banner.show { display: block; }
+
+  button.refresh {
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button.refresh:active { background: var(--panel-border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand"><strong>HK</strong> 溫度站</div>
+    <div class="clock" id="clock">--:--:--</div>
+  </header>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <section class="live-panel">
+    <div class="live-row">
+      <span class="live-dot" id="liveDot"></span>
+      <span class="live-label">即時讀數</span>
+    </div>
+    <div class="temp-value" id="tempValue">--<span class="unit">°C</span></div>
+    <div class="station-line">
+      <span class="place" id="stationPlace">香港天文台總部</span>
+      <span id="recordTime">讀取中…</span>
+    </div>
+    <div class="station-line" style="margin-top:6px;">
+      <span>今日至今：<span id="todayMax" style="color:var(--warm);font-family:var(--mono);">--°</span> / <span id="todayMin" style="color:var(--cool);font-family:var(--mono);">--°</span></span>
+    </div>
+  </section>
+
+  <section class="gauge-panel">
+    <div class="panel-title">
+      <span>今日高溫 · 模型共識</span>
+      <span class="flag" id="spreadFlag"></span>
+    </div>
+    <div class="gauge-track">
+      <div class="gauge-needle" id="gaugeNeedle" style="left:50%"></div>
+    </div>
+    <div class="gauge-labels">
+      <span id="gaugeLo">--°</span>
+      <span id="gaugeHi">--°</span>
+    </div>
+    <div class="stats-row">
+      <div class="stat"><div class="k" id="statMean">--°</div><div class="v">平均</div></div>
+      <div class="stat"><div class="k" id="statStd">--°</div><div class="v">標準差</div></div>
+      <div class="stat"><div class="k" id="statSpread">--°</div><div class="v">分歧</div></div>
+    </div>
+  </section>
+
+  <section class="ladder-panel">
+    <div class="panel-title">階梯建議（機率最高嘅3個相鄰區間）</div>
+    <div id="ladderList">
+      <div class="ladder-item"><span class="ladder-range">--</span><div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:0%"></div></div><span class="ladder-prob">--%</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <button class="refresh" id="refreshBtn">手動重新整理</button>
+    <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo</div>
+  </footer>
+
+</div>
+
+<script>
+// ============================================================
+// 設定
+// ============================================================
+const LAT = 22.302, LON = 114.174;
+const METRIC = "max"; // "max" 或 "min"
+const TEMP_ENDPOINT = "/.netlify/functions/temperature"; // 經自己Netlify Function代理，避免CORS
+const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
+const LIVE_POLL_MS = 30_000;
+const FORECAST_POLL_MS = 10 * 60_000;
+// 如果你有部署 bias.json（見 update_bias.js），填返個raw URL，例如：
+// "https://raw.githubusercontent.com/你的用戶名/你的repo/main/bias.json"
+const BIAS_URL = null;
+
+// ============================================================
+// 常態分佈工具
+// ============================================================
+function erf(x) {
+  const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t = 1/(1+p*x);
+  const y = 1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+  return sign*y;
+}
+function normalCdf(x, mean, std) {
+  if (std === 0) return x >= mean ? 1 : 0;
+  return 0.5*(1+erf((x-mean)/(std*Math.SQRT2)));
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBanner');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function clearError() {
+  document.getElementById('errorBanner').classList.remove('show');
+}
+
+// ============================================================
+// 即時讀數
+// ============================================================
+let lastRecordTime = null;
+
+async function pollLive() {
+  try {
+    const res = await fetch(TEMP_ENDPOINT + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('function ' + res.status);
+    const json = await res.json();
+
+    if (json.liveError) throw new Error(json.liveError);
+    if (json.live.value === null) throw new Error('即時讀數暫時N/A');
+
+    const value = json.live.value.toFixed(1);
+    document.getElementById('tempValue').innerHTML = `${value}<span class="unit">°C</span>`;
+    document.getElementById('stationPlace').textContent = '香港天文台總部';
+    document.getElementById('recordTime').textContent = formatRelativeTime(json.live.recordTime);
+
+    if (json.today && !json.todayError) {
+      document.getElementById('todayMax').textContent = (json.today.max ?? '--').toString() + '°';
+      document.getElementById('todayMin').textContent = (json.today.min ?? '--').toString() + '°';
+    }
+
+    lastRecordTime = json.live.recordTime;
+    document.getElementById('liveDot').classList.remove('stale');
+
+    updateGaugeNeedle(Number(value));
+    clearError();
+  } catch (e) {
+    document.getElementById('liveDot').classList.add('stale');
+    showError('即時讀數暫時攞唔到：' + e.message);
+  }
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return '未知時間';
+  const t = new Date(iso);
+  const diffMin = Math.round((Date.now() - t.getTime()) / 60000);
+  if (diffMin < 1) return '啱啱';
+  if (diffMin < 60) return `${diffMin}分鐘前`;
+  return t.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ============================================================
+// 多模型預報 + 機率分析
+// ============================================================
+let forecastState = null;
+
+async function pollForecast() {
+  try {
+    const field = METRIC === 'max' ? 'temperature_2m_max' : 'temperature_2m_min';
+    const today = new Date().toISOString().slice(0, 10);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&daily=${field}&timezone=auto&models=${MODELS.join(',')}&start_date=${today}&end_date=${today}` +
+      `&_=${Date.now()}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Open-Meteo ' + res.status);
+    const data = await res.json();
+
+    let bias = {};
+    if (BIAS_URL) {
+      try {
+        const bRes = await fetch(BIAS_URL + '?_=' + Date.now(), { cache: 'no-store' });
+        if (bRes.ok) bias = (await bRes.json())[METRIC] || {};
+      } catch { /* 冇bias就照跑 */ }
+    }
+
+    const values = [];
+    for (const model of MODELS) {
+      const arr = data.daily?.[`${field}_${model}`];
+      if (arr && arr[0] != null) values.push(arr[0] + (bias[model] || 0));
+    }
+    if (values.length < 2) throw new Error('可用模型太少');
+
+    const n = values.length;
+    const mean = values.reduce((a,b)=>a+b,0)/n;
+    const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
+    const std = Math.sqrt(variance);
+    const spread = Math.max(...values) - Math.min(...values);
+
+    const range = Math.max(4*std, 3);
+    const lo = Math.floor(mean-range), hi = Math.ceil(mean+range);
+    const buckets = [];
+    for (let b = lo; b < hi; b++) {
+      const p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+      buckets.push({ range: `${b}–${b+1}°`, low: b, prob: p });
+    }
+    let best = { i: 0, sum: -1 };
+    for (let i = 0; i <= buckets.length - 3; i++) {
+      const s = buckets[i].prob + buckets[i+1].prob + buckets[i+2].prob;
+      if (s > best.sum) best = { i, sum: s };
+    }
+    const ladder = buckets.slice(best.i, best.i + 3);
+
+    forecastState = { mean, std, spread, low: mean - 3*std, high: mean + 3*std, ladder };
+    renderForecast();
+    clearError();
+  } catch (e) {
+    showError('模型預報暫時攞唔到：' + e.message);
+  }
+}
+
+function renderForecast() {
+  if (!forecastState) return;
+  const { mean, std, spread, low, high, ladder } = forecastState;
+
+  document.getElementById('statMean').textContent = mean.toFixed(1)+'°';
+  document.getElementById('statStd').textContent = std.toFixed(1)+'°';
+  document.getElementById('statSpread').textContent = spread.toFixed(1)+'°';
+  document.getElementById('gaugeLo').textContent = low.toFixed(0)+'°';
+  document.getElementById('gaugeHi').textContent = high.toFixed(0)+'°';
+
+  const flagEl = document.getElementById('spreadFlag');
+  flagEl.textContent = spread >= 1 ? '⚠ 分歧較大' : '';
+
+  const listEl = document.getElementById('ladderList');
+  listEl.innerHTML = '';
+  const maxProb = Math.max(...ladder.map(b=>b.prob));
+  ladder.forEach(b => {
+    const item = document.createElement('div');
+    item.className = 'ladder-item';
+    item.innerHTML = `
+      <span class="ladder-range">${b.range}C</span>
+      <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>
+      <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
+    `;
+    listEl.appendChild(item);
+  });
+
+  const liveTempText = document.getElementById('tempValue').textContent.replace('°C','');
+  const liveTemp = parseFloat(liveTempText);
+  if (!Number.isNaN(liveTemp)) updateGaugeNeedle(liveTemp);
+}
+
+function updateGaugeNeedle(value) {
+  if (!forecastState) return;
+  const { low, high } = forecastState;
+  const pct = Math.min(100, Math.max(0, ((value - low) / (high - low)) * 100));
+  document.getElementById('gaugeNeedle').style.left = pct + '%';
+}
+
+// ============================================================
+// Clock + init
+// ============================================================
+function tickClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('zh-HK', { hour12:false });
+}
+setInterval(tickClock, 1000); tickClock();
+
+document.getElementById('refreshBtn').addEventListener('click', () => { pollLive(); pollForecast(); });
+
+pollLive();
+pollForecast();
+setInterval(pollLive, LIVE_POLL_MS);
+setInterval(pollForecast, FORECAST_POLL_MS);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { pollLive(); }
+});
+</script>
+</body>
+</html>

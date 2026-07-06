@@ -1,0 +1,33 @@
+name: Backfill Bias (run once)
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "回填幾多日（建議60-90）"
+        required: true
+        default: "60"
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 執行backfill
+        run: node backfill_bias.js --days=${{ github.event.inputs.days }}
+
+      - name: Commit結果
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          git add forecast_log.csv bias.json
+          git diff --staged --quiet || git commit -m "chore: backfill bias (${{ github.event.inputs.days }} days)"
+          git push

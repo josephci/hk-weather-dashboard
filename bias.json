@@ -1,7 +1,15 @@
 {
-  "generatedAt": "2026-07-06T00:16:28.590Z",
-  "sampleDays": 0,
-  "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。",
-  "max": {},
+  "generatedAt": "2026-07-06T15:18:14.183Z",
+  "sampleDays": 26,
+  "source": "backfill (HKO CLMMAXT + Open-Meteo Historical Forecast)",
+  "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。daily_log.js之後會持續更新。",
+  "max": {
+    "gfs_seamless": 1.55,
+    "ecmwf_ifs025": 0.95,
+    "icon_seamless": 1.58,
+    "ukmo_seamless": 0.33,
+    "gem_seamless": 1.32,
+    "jma_seamless": 0.94
+  },
   "min": {}
 }

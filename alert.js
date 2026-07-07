@@ -57,6 +57,26 @@ async function fetchCsvRow(url, expectCols) {
   throw new Error(`搵唔到天文台總部行: ${url}`);
 }
 
+// ---------- 快水喉：rhrread（整點讀數~04分出，早CSV約4分鐘；整數精度） ----------
+const RHRREAD_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc";
+
+async function fetchRhrread() {
+  try {
+    const res = await fetch(RHRREAD_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`rhrread ${res.status}`);
+    const json = await res.json();
+    const station = json.temperature?.data?.find((d) => STATION_PATTERN.test(d.place.trim()));
+    if (!station) return null;
+    return {
+      value: Number(station.value), // 整數
+      recordTime: json.temperature.recordTime ?? null,
+    };
+  } catch (e) {
+    console.error("rhrread快水喉失敗（唔影響主流程）:", e.message);
+    return null;
+  }
+}
+
 // ---------- Telegram ----------
 async function sendTelegram(text) {
   const token = process.env.TG_BOT_TOKEN;
@@ -251,9 +271,10 @@ function bucketModelProb(label, probs) {
 
 // ---------- 主邏輯 ----------
 async function main() {
-  const [liveRow, maxMinRow] = await Promise.all([
+  const [liveRow, maxMinRow, fast] = await Promise.all([
     fetchCsvRow(LIVE_CSV_URL),
     fetchCsvRow(MAXMIN_CSV_URL),
+    fetchRhrread(), // 快水喉：早CSV約4分鐘，整數
   ]);
 
   const current = toNum(liveRow[2]);
@@ -267,10 +288,27 @@ async function main() {
 
   // 新一日reset（香港時間過咗午夜，today max/min重新開始）
   if (isNewDay) {
-    Object.assign(state, { date: today, prevCurrent: null, prevMax: null, alertedFloors: [], approachAlerted: null, pulledBackAlerted: false, edgeAlerted: {} });
+    Object.assign(state, { date: today, prevCurrent: null, prevMax: null, alertedFloors: [], approachAlerted: null, pulledBackAlerted: false, edgeAlerted: {}, fastAlerted: [] });
   }
 
   const events = [];
+
+  // A0: 快水喉搶先破關偵測（rhrread整點讀數，比CSV早~4分鐘）
+  // 用「現時整數讀數 > 今日CSV已知max嘅整數位」判斷：代表CSV仲未反映嘅新關口大概率已破
+  if (fast && !Number.isNaN(fast.value) && todayMax !== null) {
+    const fastFloor = Math.floor(fast.value);
+    const knownFloor = Math.floor(todayMax);
+    const fastAlerted = state.fastAlerted || [];
+    if (fastFloor > knownFloor && !fastAlerted.includes(fastFloor)) {
+      events.push(
+        `⚡🚨 <b>快水喉搶先訊號</b>：rhrread現報 ${fast.value}°C（整數，${fast.recordTime?.slice(11, 16) ?? "?"}讀數）\n` +
+        `高過CSV已知今日max ${todayMax.toFixed(1)}°C 嘅整數位 → <b>${fastFloor}.0°C關口大概率已破</b>\n` +
+        `→ CSV要遲~4分鐘先確認，呢一刻市場可能未完全重價，判斷後從速`
+      );
+      fastAlerted.push(fastFloor);
+      state.fastAlerted = fastAlerted;
+    }
+  }
 
   // A: 今日高溫破新高
   if (todayMax !== null && state.prevMax !== null && todayMax > state.prevMax) {
@@ -282,7 +320,12 @@ async function main() {
     const floor = Math.floor(todayMax);
     const alerted = state.alertedFloors || [];
     if (state.prevMax !== null && floor > Math.floor(state.prevMax) && !alerted.includes(floor)) {
-      events.push(`🚨 <b>破關口</b>：今日高溫已升穿 ${floor}.0°C（現報 ${todayMax.toFixed(1)}°C）\n→ Polymarket「&lt;${floor}°C」bucket已死，重價中`);
+      const wasFastAlerted = (state.fastAlerted || []).includes(floor);
+      if (wasFastAlerted) {
+        events.push(`✅ <b>CSV確認</b>：今日高溫 ${todayMax.toFixed(1)}°C，${floor}.0°C關口正式確認已破（快水喉早前已提示）`);
+      } else {
+        events.push(`🚨 <b>破關口</b>：今日高溫已升穿 ${floor}.0°C（現報 ${todayMax.toFixed(1)}°C）\n→ Polymarket「&lt;${floor}°C」bucket已死，重價中`);
+      }
       alerted.push(floor);
       state.alertedFloors = alerted;
     }
@@ -371,7 +414,8 @@ async function main() {
   appendHistory(recordTime, current, todayMax, todayMin);
 
   if (events.length > 0) {
-    const header = `🌡 <b>HK天文台總部</b>（${recordTime.slice(11, 16)}）\n現時 ${current?.toFixed(1) ?? "N/A"}°C ｜ 今日 ${todayMax?.toFixed(1) ?? "?"}° / ${todayMin?.toFixed(1) ?? "?"}°\n\n`;
+    const fastLine = fast && !Number.isNaN(fast.value) ? ` ｜ 快 ${fast.value}°(${fast.recordTime?.slice(11, 16) ?? "?"})` : "";
+    const header = `🌡 <b>HK天文台總部</b>（${recordTime.slice(11, 16)}）\n現時 ${current?.toFixed(1) ?? "N/A"}°C${fastLine} ｜ 今日 ${todayMax?.toFixed(1) ?? "?"}° / ${todayMin?.toFixed(1) ?? "?"}°\n\n`;
 
     // 附上當日Polymarket市場連結+現價（一撳直達，慳走搵market嘅時間）
     let marketBlock = "";

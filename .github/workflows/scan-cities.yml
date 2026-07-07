@@ -1,0 +1,27 @@
+name: Global Temp Edge Scan
+
+on:
+  schedule:
+    # 每6小時掃一次，時間揀喺各主要市場嘅朝早前後
+    # UTC 00:00(HK朝8) / 06:00(歐洲朝) / 12:00(美東朝8) / 18:00
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 全球Edge掃描
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node scan_cities.js

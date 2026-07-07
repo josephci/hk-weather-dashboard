@@ -45,6 +45,48 @@ const CITIES = {
   "toronto":       { lat: 43.6532, lon: -79.3832, tz: "America/Toronto" },
   "singapore":     { lat: 1.3521,  lon: 103.8198, tz: "Asia/Singapore" },
   "sydney":        { lat: -33.8688,lon: 151.2093, tz: "Australia/Sydney" },
+  // ---- 美洲 ----
+  "seattle":       { lat: 47.4502, lon: -122.3088,tz: "America/Los_Angeles" }, // SeaTac
+  "austin":        { lat: 30.1945, lon: -97.6699, tz: "America/Chicago" },     // Bergstrom
+  "denver":        { lat: 39.8561, lon: -104.6737,tz: "America/Denver" },      // DEN
+  "houston":       { lat: 29.9902, lon: -95.3368, tz: "America/Chicago" },     // IAH
+  "san francisco": { lat: 37.6213, lon: -122.379, tz: "America/Los_Angeles" }, // SFO
+  "mexico city":   { lat: 19.4363, lon: -99.0721, tz: "America/Mexico_City" },
+  "panama city":   { lat: 8.9824,  lon: -79.5199, tz: "America/Panama" },
+  "sao paulo":     { lat: -23.5505,lon: -46.6333, tz: "America/Sao_Paulo" },
+  "são paulo":     { lat: -23.5505,lon: -46.6333, tz: "America/Sao_Paulo" },
+  "buenos aires":  { lat: -34.6037,lon: -58.3816, tz: "America/Argentina/Buenos_Aires" },
+  // ---- 歐洲 ----
+  "munich":        { lat: 48.1351, lon: 11.5820,  tz: "Europe/Berlin" },
+  "milan":         { lat: 45.4642, lon: 9.1900,   tz: "Europe/Rome" },
+  "madrid":        { lat: 40.4168, lon: -3.7038,  tz: "Europe/Madrid" },
+  "warsaw":        { lat: 52.2297, lon: 21.0122,  tz: "Europe/Warsaw" },
+  "amsterdam":     { lat: 52.3105, lon: 4.7683,   tz: "Europe/Amsterdam" },    // Schiphol
+  "helsinki":      { lat: 60.1699, lon: 24.9384,  tz: "Europe/Helsinki" },
+  "moscow":        { lat: 55.7558, lon: 37.6173,  tz: "Europe/Moscow" },
+  "istanbul":      { lat: 41.0082, lon: 28.9784,  tz: "Europe/Istanbul" },
+  "ankara":        { lat: 39.9334, lon: 32.8597,  tz: "Europe/Istanbul" },
+  // ---- 中東/非洲 ----
+  "tel aviv":      { lat: 32.0853, lon: 34.7818,  tz: "Asia/Jerusalem" },
+  "jeddah":        { lat: 21.4858, lon: 39.1925,  tz: "Asia/Riyadh" },
+  "cape town":     { lat: -33.9249,lon: 18.4241,  tz: "Africa/Johannesburg" },
+  // ---- 亞太 ----
+  "beijing":       { lat: 39.9042, lon: 116.4074, tz: "Asia/Shanghai" },
+  "shanghai":      { lat: 31.2304, lon: 121.4737, tz: "Asia/Shanghai" },
+  "shenzhen":      { lat: 22.5431, lon: 114.0579, tz: "Asia/Shanghai" },
+  "guangzhou":     { lat: 23.1291, lon: 113.2644, tz: "Asia/Shanghai" },
+  "chengdu":       { lat: 30.5728, lon: 104.0668, tz: "Asia/Shanghai" },
+  "chongqing":     { lat: 29.5630, lon: 106.5516, tz: "Asia/Shanghai" },
+  "wuhan":         { lat: 30.5928, lon: 114.3055, tz: "Asia/Shanghai" },
+  "jinan":         { lat: 36.6512, lon: 117.1201, tz: "Asia/Shanghai" },
+  "zhengzhou":     { lat: 34.7466, lon: 113.6254, tz: "Asia/Shanghai" },
+  "qingdao":       { lat: 36.0671, lon: 120.3826, tz: "Asia/Shanghai" },
+  "taipei":        { lat: 25.0330, lon: 121.5654, tz: "Asia/Taipei" },
+  "busan":         { lat: 35.1796, lon: 129.0756, tz: "Asia/Seoul" },
+  "manila":        { lat: 14.5995, lon: 120.9842, tz: "Asia/Manila" },
+  "kuala lumpur":  { lat: 3.1390,  lon: 101.6869, tz: "Asia/Kuala_Lumpur" },
+  "lucknow":       { lat: 26.8467, lon: 80.9462,  tz: "Asia/Kolkata" },
+  "wellington":    { lat: -41.2866,lon: 174.7756, tz: "Pacific/Auckland" },
 };
 
 function erf(x) {

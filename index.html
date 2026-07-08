@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="HK溫度站" />
+<meta name="theme-color" content="#0B1220" />
+<link rel="manifest" href="/manifest.webmanifest" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
@@ -260,6 +262,55 @@
     cursor: pointer;
   }
   button.refresh:active { background: var(--panel-border); }
+
+  /* ---- 城市tabs ---- */
+  .city-tabs {
+    display: flex;
+    gap: 8px;
+  }
+  .city-tab {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 0;
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .city-tab.active {
+    color: var(--bg);
+    background: var(--brass);
+    border-color: var(--brass);
+  }
+
+  /* ---- 今日走勢圖 ---- */
+  .trend-svg { width: 100%; height: 140px; display: block; }
+  .trend-line { fill: none; stroke: var(--brass); stroke-width: 2; }
+  .trend-max-line { stroke: var(--warm); stroke-width: 1; stroke-dasharray: 4 4; }
+  .trend-label { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+
+  /* ---- Edge表 ---- */
+  .edge-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--panel-border);
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+  .edge-row:last-child { border-bottom: none; }
+  .edge-label { width: 96px; flex-shrink: 0; font-weight: 600; }
+  .edge-nums { flex: 1; color: var(--muted); font-size: 13px; }
+  .edge-val { width: 62px; text-align: right; font-weight: 700; flex-shrink: 0; }
+  .edge-pos { color: #6FCF97; }
+  .edge-neg { color: var(--warm); }
+  .edge-flat { color: var(--muted); font-weight: 400; }
+  a.market-link { color: var(--brass); text-decoration: none; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -271,6 +322,14 @@
   </header>
 
   <div class="error-banner" id="errorBanner"></div>
+
+  <div class="city-tabs">
+    <button class="city-tab active" data-city="hk">香港</button>
+    <button class="city-tab" data-city="shanghai">上海</button>
+    <button class="city-tab" data-city="beijing">北京</button>
+  </div>
+
+  <div id="view-hk" style="display:contents;">
 
   <section class="live-panel">
     <div class="live-row">
@@ -284,6 +343,10 @@
     </div>
     <div class="station-line" style="margin-top:6px;">
       <span>今日至今：<span id="todayMax" style="color:var(--warm);font-family:var(--mono);">--°</span> / <span id="todayMin" style="color:var(--cool);font-family:var(--mono);">--°</span></span>
+    </div>
+    <div class="station-line" style="margin-top:6px;">
+      <span>✈️ 赤鱲角METAR：<span id="metarTemp" style="font-family:var(--mono);">--°</span></span>
+      <span id="metarTime" style="font-size:12px;"></span>
     </div>
   </section>
 
@@ -325,6 +388,54 @@
     </div>
   </section>
 
+  <section class="ladder-panel">
+    <div class="panel-title">今日溫度走勢（history.csv）</div>
+    <svg class="trend-svg" id="trendSvg" viewBox="0 0 360 140" preserveAspectRatio="none"></svg>
+    <div class="station-line" style="margin-top:4px;"><span id="trendNote" style="font-size:12px;color:var(--muted);">載入中…</span></div>
+  </section>
+
+  <section class="ladder-panel">
+    <div class="panel-title" id="edgeTitleHk">今日Edge：模型 vs 市場</div>
+    <div id="edgeListHk"><div class="edge-row"><span class="edge-flat">載入中…</span></div></div>
+    <div style="margin-top:10px;"><a class="market-link" id="marketLinkHk" href="#" target="_blank"></a></div>
+  </section>
+
+  </div><!-- /view-hk -->
+
+  <!-- 上海/北京 view -->
+  <div id="view-cn" style="display:none;">
+    <section class="live-panel">
+      <div class="live-row">
+        <span class="live-dot" id="cnLiveDot"></span>
+        <span class="live-label" id="cnLiveLabel">METAR即時（結算源）</span>
+      </div>
+      <div class="temp-value" id="cnTempValue">--<span class="unit">°C</span></div>
+      <div class="station-line">
+        <span class="place" id="cnStationPlace">--</span>
+        <span id="cnRecordTime">讀取中…</span>
+      </div>
+      <div class="station-line" style="margin-top:6px;">
+        <span style="font-size:12px;">結算源=METAR整數°C，呢個讀數就係全精度</span>
+      </div>
+    </section>
+
+    <section class="ladder-panel" style="margin-top:16px;">
+      <div class="panel-title" id="cnTomorrowTitle">今日高溫預測 · 6模型（未校正）</div>
+      <div class="stats-row" style="margin-top:0;padding-top:0;border-top:none;margin-bottom:12px;">
+        <div class="stat"><div class="k" id="cnMean">--°</div><div class="v">平均</div></div>
+        <div class="stat"><div class="k" id="cnStd">--°</div><div class="v">標準差</div></div>
+        <div class="stat"><div class="k" id="cnSpread">--°</div><div class="v">分歧</div></div>
+      </div>
+      <div id="cnForecastList"></div>
+    </section>
+
+    <section class="ladder-panel" style="margin-top:16px;">
+      <div class="panel-title">今日Edge：模型 vs 市場</div>
+      <div id="edgeListCn"><div class="edge-row"><span class="edge-flat">載入中…</span></div></div>
+      <div style="margin-top:10px;"><a class="market-link" id="marketLinkCn" href="#" target="_blank"></a></div>
+    </section>
+  </div><!-- /view-cn -->
+
   <footer>
     <button class="refresh" id="refreshBtn">手動重新整理</button>
     <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo</div>
@@ -345,6 +456,16 @@ const FORECAST_POLL_MS = 10 * 60_000;
 // 如果你有部署 bias.json（見 update_bias.js），填返個raw URL，例如：
 // "https://raw.githubusercontent.com/你的用戶名/你的repo/main/bias.json"
 const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/bias.json";
+const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/history.csv";
+const PM_ENDPOINT = "/.netlify/functions/polymarket";
+
+// 中國城市設定（結算站=機場座標）
+const CN_CITIES = {
+  shanghai: { name: "上海浦東機場 (ZSPD)", icao: "ZSPD", lat: 31.143, lon: 121.805, pmCity: "shanghai" },
+  beijing:  { name: "北京首都機場 (ZBAA)", icao: "ZBAA", lat: 40.080, lon: 116.585, pmCity: "beijing" },
+};
+let currentCity = "hk";
+let lastMetars = null; // 由pollLive儲低,俾中國view用
 
 // ============================================================
 // 常態分佈工具
@@ -396,6 +517,18 @@ async function pollLive() {
         todayMaxRealized = json.today.max;
         renderForecast(); // 已實現高溫更新咗，重新計算階梯
       }
+    }
+
+    const vhhh = json.metars?.VHHH || json.metar;
+    if (vhhh && typeof vhhh.tempC === 'number') {
+      document.getElementById('metarTemp').textContent = vhhh.tempC.toFixed(1) + '°';
+      if (vhhh.obsTime) {
+        document.getElementById('metarTime').textContent = formatRelativeTime(vhhh.obsTime);
+      }
+    }
+    if (json.metars) {
+      lastMetars = json.metars;
+      if (currentCity !== 'hk') renderCnLive();
     }
 
     lastRecordTime = json.live.recordTime;
@@ -644,6 +777,211 @@ function updateGaugeNeedle(value) {
 }
 
 // ============================================================
+// 今日溫度走勢圖（history.csv）
+// ============================================================
+async function pollTrend() {
+  try {
+    const res = await fetch(HISTORY_URL + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('history ' + res.status);
+    const lines = (await res.text()).trim().split(/\r?\n/).slice(1);
+
+    // 香港「今日」日期
+    const today = new Date(Date.now() + 8*3600*1000).toISOString().slice(0, 10);
+    const pts = [];
+    for (const line of lines) {
+      const [recordTime, current] = line.split(',');
+      if (recordTime.startsWith(today) && current) {
+        const mins = parseInt(recordTime.slice(11,13),10)*60 + parseInt(recordTime.slice(14,16),10);
+        const v = parseFloat(current);
+        if (!Number.isNaN(v)) pts.push({ mins, v });
+      }
+    }
+    const svg = document.getElementById('trendSvg');
+    const note = document.getElementById('trendNote');
+    if (pts.length < 2) { note.textContent = '今日數據仲未夠畫圖（' + pts.length + '點）'; return; }
+
+    const W = 360, H = 140, PAD = 24;
+    const vMin = Math.min(...pts.map(p=>p.v)) - 0.5;
+    const vMax = Math.max(...pts.map(p=>p.v)) + 0.5;
+    const x = (m) => PAD + (m / 1440) * (W - PAD*2);
+    const y = (v) => H - PAD - ((v - vMin) / (vMax - vMin)) * (H - PAD*2);
+
+    const path = pts.map((p,i)=>`${i===0?'M':'L'}${x(p.mins).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    const peak = pts.reduce((a,b)=>b.v>a.v?b:a);
+    svg.innerHTML =
+      `<line class="trend-max-line" x1="${PAD}" y1="${y(peak.v)}" x2="${W-PAD}" y2="${y(peak.v)}"/>` +
+      `<path class="trend-line" d="${path}"/>` +
+      `<circle cx="${x(peak.mins)}" cy="${y(peak.v)}" r="3" fill="var(--warm)"/>` +
+      `<text class="trend-label" x="${PAD}" y="${y(peak.v)-5}">max ${peak.v.toFixed(1)}° @ ${String(Math.floor(peak.mins/60)).padStart(2,'0')}:${String(peak.mins%60).padStart(2,'0')}</text>` +
+      `<text class="trend-label" x="${PAD}" y="${H-6}">00:00</text>` +
+      `<text class="trend-label" x="${W-PAD-30}" y="${H-6}">24:00</text>`;
+    note.textContent = `${pts.length}個讀數 · 最後 ${pts[pts.length-1].v.toFixed(1)}°`;
+  } catch (e) {
+    document.getElementById('trendNote').textContent = '走勢圖攞唔到：' + e.message;
+  }
+}
+
+// ============================================================
+// Edge panel（模型% vs 市場¢）
+// ============================================================
+function bucketProbFromMap(label, probs) {
+  const t = label.toLowerCase();
+  const numMatch = t.match(/(-?\d+)/);
+  if (!numMatch) return null;
+  const deg = parseInt(numMatch[1], 10);
+  const keys = Object.keys(probs).map(Number);
+  const lo = Math.min(...keys), hi = Math.max(...keys);
+  const sum = (a,b) => { let s=0; for (let k=a;k<=b;k++) s += probs[k]||0; return s; };
+  if (t.includes('higher') || t.includes('above')) return sum(deg, hi);
+  if (t.includes('below') || t.includes('lower')) return sum(lo, deg);
+  return probs[deg] ?? 0;
+}
+
+function renderEdgeList(elId, buckets, probs) {
+  const el = document.getElementById(elId);
+  el.innerHTML = '';
+  for (const b of buckets) {
+    const mp = bucketProbFromMap(b.label, probs);
+    if (mp === null) continue;
+    const modelPct = Math.round(mp * 100);
+    const edge = modelPct - b.yesPrice;
+    const cls = Math.abs(edge) < 8 ? 'edge-flat' : (edge > 0 ? 'edge-pos' : 'edge-neg');
+    const row = document.createElement('div');
+    row.className = 'edge-row';
+    row.innerHTML =
+      `<span class="edge-label">${b.label}</span>` +
+      `<span class="edge-nums">模${modelPct}% / 市${b.yesPrice}¢</span>` +
+      `<span class="edge-val ${cls}">${edge > 0 ? '+' : ''}${edge}%</span>`;
+    el.appendChild(row);
+  }
+  if (!el.children.length) el.innerHTML = '<div class="edge-row"><span class="edge-flat">冇可比較嘅bucket</span></div>';
+}
+
+async function pollEdgeHk() {
+  try {
+    const res = await fetch(`${PM_ENDPOINT}?city=hong-kong&_=${Date.now()}`, { cache: 'no-store' });
+    const pm = await res.json();
+    if (!pm.found) { document.getElementById('edgeListHk').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>'; return; }
+
+    const { buckets: modelBuckets } = computeBuckets();
+    if (!modelBuckets.length) return;
+    const probs = {};
+    modelBuckets.forEach(b => { probs[b.low] = b.prob; });
+
+    renderEdgeList('edgeListHk', pm.buckets, probs);
+    const link = document.getElementById('marketLinkHk');
+    link.href = pm.url; link.textContent = '👉 ' + pm.title;
+  } catch (e) {
+    document.getElementById('edgeListHk').innerHTML = `<div class="edge-row"><span class="edge-flat">Edge攞唔到: ${e.message}</span></div>`;
+  }
+}
+
+// ============================================================
+// 上海/北京 view
+// ============================================================
+let cnModelProbs = null;
+
+function renderCnLive() {
+  const city = CN_CITIES[currentCity];
+  if (!city) return;
+  document.getElementById('cnStationPlace').textContent = city.name;
+  const m = lastMetars?.[city.icao];
+  if (m && typeof m.tempC === 'number') {
+    document.getElementById('cnTempValue').innerHTML = `${Math.round(m.tempC)}<span class="unit">°C</span>`;
+    document.getElementById('cnRecordTime').textContent = m.obsTime ? formatRelativeTime(m.obsTime) : '';
+    document.getElementById('cnLiveDot').classList.remove('stale');
+  } else {
+    document.getElementById('cnTempValue').innerHTML = `--<span class="unit">°C</span>`;
+    document.getElementById('cnLiveDot').classList.add('stale');
+  }
+}
+
+async function pollCnCity() {
+  const city = CN_CITIES[currentCity];
+  if (!city) return;
+  renderCnLive();
+  try {
+    // 6模型今日預測（機場座標,無bias,std下限0.5+放大1.4補償）
+    const today = new Date(Date.now() + 8*3600*1000).toISOString().slice(0, 10);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
+      `&daily=temperature_2m_max&timezone=Asia%2FShanghai&models=${MODELS.join(',')}` +
+      `&start_date=${today}&end_date=${today}&_=${Date.now()}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Open-Meteo ' + res.status);
+    const data = await res.json();
+
+    const values = [];
+    for (const mo of MODELS) {
+      const arr = data.daily?.[`temperature_2m_max_${mo}`];
+      if (arr && arr[0] != null) values.push(arr[0]);
+    }
+    if (values.length < 2) throw new Error('模型數據不足');
+
+    const n = values.length;
+    const mean = values.reduce((a,b)=>a+b,0)/n;
+    let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
+    const spread = Math.max(...values) - Math.min(...values);
+    std = Math.max(std, 0.5) * 1.4; // 無bias校正,放大補償
+
+    document.getElementById('cnMean').textContent = mean.toFixed(1)+'°';
+    document.getElementById('cnStd').textContent = std.toFixed(1)+'°';
+    document.getElementById('cnSpread').textContent = spread.toFixed(1)+'°';
+    document.getElementById('cnTomorrowTitle').textContent =
+      `今日高溫預測 · ${n}模型（未校正）` + (spread >= 1.5 ? ' ⚠分歧較大' : '');
+
+    const lo = Math.floor(mean - Math.max(4*std,3)), hi = Math.ceil(mean + Math.max(4*std,3));
+    const probs = {};
+    const listEl = document.getElementById('cnForecastList');
+    listEl.innerHTML = '';
+    const shown = [];
+    for (let b = lo; b < hi; b++) {
+      const p = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+      probs[b] = p;
+      if (p >= 0.02) shown.push({ low: b, prob: p });
+    }
+    const maxProb = Math.max(...shown.map(s=>s.prob));
+    shown.forEach(b => {
+      const item = document.createElement('div');
+      item.className = 'ladder-item';
+      item.innerHTML =
+        `<span class="ladder-range">${b.low}°C</span>` +
+        `<div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>` +
+        `<span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>`;
+      listEl.appendChild(item);
+    });
+    cnModelProbs = probs;
+
+    // Edge
+    const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}&_=${Date.now()}`, { cache: 'no-store' });
+    const pm = await pmRes.json();
+    if (pm.found) {
+      renderEdgeList('edgeListCn', pm.buckets, probs);
+      const link = document.getElementById('marketLinkCn');
+      link.href = pm.url; link.textContent = '👉 ' + pm.title;
+    } else {
+      document.getElementById('edgeListCn').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>';
+    }
+  } catch (e) {
+    document.getElementById('edgeListCn').innerHTML = `<div class="edge-row"><span class="edge-flat">攞唔到: ${e.message}</span></div>`;
+  }
+}
+
+// ============================================================
+// 城市tabs
+// ============================================================
+document.querySelectorAll('.city-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.city-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentCity = tab.dataset.city;
+    const isHk = currentCity === 'hk';
+    document.getElementById('view-hk').style.display = isHk ? 'contents' : 'none';
+    document.getElementById('view-cn').style.display = isHk ? 'none' : 'block';
+    if (!isHk) pollCnCity();
+  });
+});
+
+// ============================================================
 // Clock + init
 // ============================================================
 function tickClock() {
@@ -651,14 +989,22 @@ function tickClock() {
 }
 setInterval(tickClock, 1000); tickClock();
 
-document.getElementById('refreshBtn').addEventListener('click', () => { pollLive(); pollForecast(); pollTomorrow(); });
+document.getElementById('refreshBtn').addEventListener('click', () => {
+  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk();
+  if (currentCity !== 'hk') pollCnCity();
+});
 
 pollLive();
 pollForecast();
 pollTomorrow();
+pollTrend();
+setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
 setInterval(pollLive, LIVE_POLL_MS);
 setInterval(pollForecast, FORECAST_POLL_MS);
 setInterval(pollTomorrow, FORECAST_POLL_MS);
+setInterval(pollTrend, 5 * 60_000);
+setInterval(pollEdgeHk, 2 * 60_000);
+setInterval(() => { if (currentCity !== 'hk') pollCnCity(); }, 5 * 60_000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') { pollLive(); }

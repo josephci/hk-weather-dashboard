@@ -1,47 +1,53 @@
-# HK Weather Dashboard — Polymarket香港溫度市場輔助系統
+# HK Weather Dashboard — Polymarket溫度市場交易系統
 
-即時溫度 + 6模型機率分佈 + bias自動校正 + Telegram警報。
+香港深度線 + 上海北京METAR線 + 全球49市場掃描。
 
-## 檔案結構
+## 系統架構
 
 ```
-├── index.html                          # 手機dashboard（Netlify自動部署）
-├── netlify.toml                        # Netlify設定
-├── netlify/functions/temperature.js    # 代理天文台CSV（解決CORS）
-├── alert.js                            # Telegram警報（4種事件+Polymarket連結）
-├── daily_log.js                        # 每日記錄預測vs實測 → 自動計bias
-└── .github/workflows/
-    ├── temp-alerts.yml                 # 每5分鐘：警報+history.csv記錄
-    └── daily-bias.yml                  # 朝早07:15記錄預測 / 夜晚23:45結算+計bias
+數據源                     處理層                      輸出
+─────────                ─────────                   ─────────
+HKO 1min CSV(0.1°,慢8分) ┐
+HKO rhrread(整數,快4分)   ├→ Cloudflare Worker(每分鐘) → Telegram警報
+HKO warnsum警告          ┘   雙水喉+破關+edge+METAR
+ZSPD/ZBAA METAR          
+Open-Meteo 6模型         ┬→ Netlify Functions        → Dashboard網頁
+Polymarket Gamma API     ┘   temperature/polymarket     (3城市tabs)
+                         
+                         GitHub Actions:
+                         - daily-bias(朝晚): bias.json自動校正
+                         - scan-cities(6hr): 全球49市場edge掃描
+                         - temp-alerts(後備): history.csv記錄
 ```
 
-## 自動產生嘅數據檔（唔使自己整）
+## 檔案對照表
 
-- `history.csv` — 每5分鐘嘅溫度記錄（現時/今日max/今日min）
-- `forecast_log.csv` — 每日「6模型預測 vs 實測結果」對照表
-- `bias.json` — 每個模型嘅系統性偏差（累積7日數據後開始出）
-- `alert_state.json` — 警報系統內部state
+| 檔案 | 跑喺邊 | 做乜 |
+|---|---|---|
+| index.html | Netlify | 3城市dashboard:即時/機率/走勢圖/Edge表 |
+| netlify/functions/temperature.js | Netlify | 代理HKO CSV+3機場METAR(解決CORS) |
+| netlify/functions/polymarket.js | Netlify | 代理Gamma API攞market現價 |
+| worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
+| daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias |
+| backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
+| scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
+| alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv |
+| watch.js | 本機(可選) | 秒級精度本地監察 |
+| latency_race.js | 本機(實驗) | 渠道延遲測量 |
 
-## 首次設定
+## 關鍵發現記錄(俾未來嘅自己)
 
-1. **Telegram warning（可選但強烈建議）**
-   - @BotFather 開bot → 攞 `TG_BOT_TOKEN`
-   - 同個bot講句嘢 → 開 `https://api.telegram.org/bot<TOKEN>/getUpdates` 攞 `TG_CHAT_ID`
-   - Repo → Settings → Secrets and variables → Actions → 加呢兩個secrets
+- rhrread整點讀數~04分出,1min CSV~08分先出 → 雙水喉設計嘅由來
+- 6模型系統性低估HK總部1-2°C(熱島),bias.json自動校正緊
+- 颱風/雷暴日模型可以錯5σ(2026-07-05實例:預測30.5°實開33°) → 警告日std×1.8
+- 上海北京market結算源=機場METAR整數,冇小數呢回事
+- Wunderground嘅x.1°係°F換算殘影,唔係真精度
 
-2. **手動觸發一次測試**
-   - Actions tab → "Daily Bias Pipeline" → Run workflow → mode=forecast
-   - Actions tab → "HK Temp Alerts" → Run workflow
+## Secrets清單
 
-## Bias校正點運作
+- GitHub: TG_BOT_TOKEN, TG_CHAT_ID
+- Cloudflare Worker: TG_BOT_TOKEN, TG_CHAT_ID + KV binding "STATE"
 
-- 每朝07:15記錄「今日6模型嘅預測」
-- 每晚23:45記錄「今日實測最高溫」，計 `bias = 實測 − 預測` 嘅平均
-- Dashboard自動由 `bias.json` 讀取，用「校正後」數值計機率
-- **數據未夠7日之前**，dashboard顯示嘅係raw模型（會偏凍2-3°C，見過往記錄），呢段時間唔好直接信個%落單
+## 交易警示
 
-## ⚠️ 交易警示
-
-- 模型喺颱風/雷暴日可以錯5σ（2026-07-05實例：模型平均30.5° vs 實開33°）
-- 「模型% vs 市場價」有大差距時，先假設係自己模型錯，唔係市場錯
-- 呢個系統係決策輔助，唔係財務建議
+模型% vs 市場價差距大,先假設自己錯。惡劣天氣日減注。呢個係決策輔助,唔係財務建議。

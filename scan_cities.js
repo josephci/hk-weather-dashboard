@@ -71,8 +71,8 @@ const CITIES = {
   "jeddah":        { lat: 21.4858, lon: 39.1925,  tz: "Asia/Riyadh" },
   "cape town":     { lat: -33.9249,lon: 18.4241,  tz: "Africa/Johannesburg" },
   // ---- 亞太 ----
-  "beijing":       { lat: 39.9042, lon: 116.4074, tz: "Asia/Shanghai" },
-  "shanghai":      { lat: 31.2304, lon: 121.4737, tz: "Asia/Shanghai" },
+  "beijing":       { lat: 40.080,  lon: 116.585,  tz: "Asia/Shanghai" },  // ZBAA首都機場(結算站)
+  "shanghai":      { lat: 31.143,  lon: 121.805,  tz: "Asia/Shanghai" },  // ZSPD浦東機場(結算站)
   "shenzhen":      { lat: 22.5431, lon: 114.0579, tz: "Asia/Shanghai" },
   "guangzhou":     { lat: 23.1291, lon: 113.2644, tz: "Asia/Shanghai" },
   "chengdu":       { lat: 30.5728, lon: 104.0668, tz: "Asia/Shanghai" },

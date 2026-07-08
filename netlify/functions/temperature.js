@@ -59,8 +59,27 @@ async function fetchMaxMin() {
   return null;
 }
 
+// METAR（VHHH赤鱲角+ZSPD浦東+ZBAA首都）：航空氣象報文，發佈節奏獨立。
+// ⚠️ VHHH做香港平行數據源（機場≠總部，差1-2°C，睇趨勢用）；
+//   ZSPD/ZBAA就係上海北京market嘅結算源本身（METAR整數=全精度）。
+async function fetchMetar() {
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA&format=json");
+  if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
+  const arr = await res.json();
+  const out = {};
+  for (const m of Array.isArray(arr) ? arr : []) {
+    if (m.icaoId && typeof m.temp === "number") {
+      out[m.icaoId] = {
+        tempC: m.temp,
+        obsTime: m.reportTime || m.obsTime || null,
+      };
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 exports.handler = async function () {
-  const [liveResult, maxMinResult] = await Promise.allSettled([fetchLive(), fetchMaxMin()]);
+  const [liveResult, maxMinResult, metarResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar()]);
 
   const response = {};
 
@@ -75,6 +94,11 @@ exports.handler = async function () {
     response.todayRecordTime = maxMinResult.value.recordTime;
   } else {
     response.todayError = maxMinResult.status === "rejected" ? maxMinResult.reason.message : "搵唔到今日高低溫資料";
+  }
+
+  if (metarResult.status === "fulfilled" && metarResult.value) {
+    response.metars = metarResult.value; // { VHHH: {tempC,obsTime}, ZSPD: {...}, ZBAA: {...} }
+    response.metar = metarResult.value.VHHH || null; // 向後兼容舊前端
   }
 
   return {

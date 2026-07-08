@@ -5,7 +5,11 @@
   "alertedFloors": [],
   "approachAlerted": null,
   "pulledBackAlerted": false,
-  "lastWarnCodes": "WTS",
-  "edgeAlerted": {},
+  "lastWarnCodes": "",
+  "edgeAlerted": {
+    "31°C": 57,
+    "32°C": -23,
+    "33°C": -32
+  },
   "fastAlerted": []
 }

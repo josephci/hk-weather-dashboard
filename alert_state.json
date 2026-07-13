@@ -1,17 +1,16 @@
 {
   "date": "2026-07-13",
-  "prevCurrent": 31.1,
-  "prevMax": 31.5,
+  "prevCurrent": 32.3,
+  "prevMax": 33.8,
   "alertedFloors": [
-    31
+    31,
+    33
   ],
-  "approachAlerted": null,
-  "pulledBackAlerted": false,
+  "approachAlerted": 34,
+  "pulledBackAlerted": true,
   "lastWarnCodes": "",
-  "edgeAlerted": {
-    "31°C": 41,
-    "32°C": -12,
-    "33°C": -28
-  },
-  "fastAlerted": []
+  "edgeAlerted": {},
+  "fastAlerted": [
+    34
+  ]
 }

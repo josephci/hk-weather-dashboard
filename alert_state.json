@@ -7,7 +7,12 @@
   ],
   "approachAlerted": null,
   "pulledBackAlerted": false,
-  "lastWarnCodes": "WTS",
-  "edgeAlerted": {},
+  "lastWarnCodes": "WRAIN,WTS",
+  "edgeAlerted": {
+    "27°C": -16,
+    "28°C": -21,
+    "30°C": 12,
+    "31°C": 13
+  },
   "fastAlerted": []
 }

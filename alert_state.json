@@ -1,16 +1,17 @@
 {
   "date": "2026-07-15",
-  "prevCurrent": 27.2,
+  "prevCurrent": 27.4,
   "prevMax": 28.8,
   "alertedFloors": [
     28
   ],
   "approachAlerted": 29,
-  "pulledBackAlerted": false,
+  "pulledBackAlerted": true,
   "lastWarnCodes": "WRAIN,WTS",
   "edgeAlerted": {
-    "30°C": 10,
-    "28°C": -24
+    "30°C": 22,
+    "28°C": -62,
+    "29°C": 33
   },
   "fastAlerted": [
     28

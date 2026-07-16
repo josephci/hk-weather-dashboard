@@ -124,7 +124,13 @@ exports.handler = async function (event) {
       const history = await fetchMetarHistory(icao, hours);
       return {
         statusCode: 200,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store, no-cache, must-revalidate" },
+        headers: {
+          "Content-Type": "application/json",
+          // 瀏覽器唔好cache,但Netlify CDN cache 4分鐘:METAR半個鐘先一份,
+          // 幾多個tab/device都共用一次function invocation,慳credit
+          "Cache-Control": "no-store",
+          "Netlify-CDN-Cache-Control": "public, s-maxage=240, stale-while-revalidate=300",
+        },
         body: JSON.stringify({ icao, history }),
       };
     } catch (e) {
@@ -158,9 +164,16 @@ exports.handler = async function (event) {
     response.rain = rainResult.value; // { localMm, maxMm, maxDistrict, endTime }
   }
 
+  const ok = !response.liveError;
   return {
-    statusCode: response.liveError ? 502 : 200,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store, no-cache, must-revalidate" },
+    statusCode: ok ? 200 : 502,
+    headers: {
+      "Content-Type": "application/json",
+      // 瀏覽器唔好cache,但Netlify CDN cache 30秒(HKO數據本身幾分鐘先更新):
+      // 所有tab/device喺30秒window內共用一次function invocation,慳credit
+      "Cache-Control": "no-store",
+      ...(ok ? { "Netlify-CDN-Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } : {}),
+    },
     body: JSON.stringify(response),
   };
 };

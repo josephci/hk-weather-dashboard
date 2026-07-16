@@ -36,10 +36,18 @@ exports.handler = async function (event) {
     }
     const events = await res.json();
     const target = Array.isArray(events) ? events[0] : null;
+    // CDN cache 60秒(下面found:true同樣):市價喺dashboard本身都係2分鐘先refresh,
+    // 全部tab/device共用一次invocation,慳Netlify credit
+    const CACHE_HEADERS = {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Netlify-CDN-Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+    };
+
     if (!target) {
       return {
         statusCode: 200,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        headers: CACHE_HEADERS,
         body: JSON.stringify({ found: false, slug }),
       };
     }
@@ -57,7 +65,7 @@ exports.handler = async function (event) {
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: CACHE_HEADERS,
       body: JSON.stringify({
         found: true,
         title: target.title,

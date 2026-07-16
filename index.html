@@ -474,7 +474,7 @@ const LAT = 22.302, LON = 114.174;
 const METRIC = "max"; // "max" 或 "min"
 const TEMP_ENDPOINT = "/.netlify/functions/temperature"; // 經自己Netlify Function代理，避免CORS
 const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
-const LIVE_POLL_MS = 30_000;
+const LIVE_POLL_MS = 60_000; // HKO數據幾分鐘先更新一次,30秒poll係浪費function credit
 const FORECAST_POLL_MS = 10 * 60_000;
 // 如果你有部署 bias.json（見 update_bias.js），填返個raw URL，例如：
 // "https://raw.githubusercontent.com/你的用戶名/你的repo/main/bias.json"
@@ -535,7 +535,8 @@ let lastRecordTime = null;
 
 async function pollLive() {
   try {
-    const res = await fetch(TEMP_ENDPOINT + '?_=' + Date.now(), { cache: 'no-store' });
+    // ⚠️ 唔好加?_=時間戳:會令Netlify CDN cache永遠miss,每次poll都真跑function
+    const res = await fetch(TEMP_ENDPOINT, { cache: 'no-store' });
     if (!res.ok) throw new Error('function ' + res.status);
     const json = await res.json();
 
@@ -963,7 +964,7 @@ function renderEdgeList(elId, buckets, probs) {
 
 async function pollEdgeHk() {
   try {
-    const res = await fetch(`${PM_ENDPOINT}?city=hong-kong&_=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${PM_ENDPOINT}?city=hong-kong`, { cache: 'no-store' });
     const pm = await res.json();
     if (!pm.found) { document.getElementById('edgeListHk').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>'; return; }
 
@@ -1059,7 +1060,7 @@ async function pollCnCity() {
     cnModelProbs = probs;
 
     // Edge
-    const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}&_=${Date.now()}`, { cache: 'no-store' });
+    const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}`, { cache: 'no-store' });
     const pm = await pmRes.json();
     if (pm.found) {
       renderEdgeList('edgeListCn', pm.buckets, probs);
@@ -1083,7 +1084,7 @@ async function pollMetarTrend() {
   if (!city) return;
   const note = document.getElementById('metarTrendNote');
   try {
-    const res = await fetch(`${TEMP_ENDPOINT}?history=${city.icao}&_=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${TEMP_ENDPOINT}?history=${city.icao}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('function ' + res.status);
     const json = await res.json();
     if (!Array.isArray(json.history) || !json.history.length) throw new Error('未有歷史METAR');
@@ -1264,23 +1265,32 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
   if (currentCity !== 'hk') pollCnCity();
 });
 
+// 背景tab唔poll:收埋嘅tab照poll係浪費function credit,
+// 返嚟嗰下visibilitychange會即刻補一次
+function whenVisible(fn) {
+  return () => { if (!document.hidden) fn(); };
+}
+
 pollLive();
 pollForecast();
 pollTomorrow();
 pollTrend();
 setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
-setInterval(pollLive, LIVE_POLL_MS);
-setInterval(pollForecast, FORECAST_POLL_MS);
-setInterval(pollTomorrow, FORECAST_POLL_MS);
-setInterval(pollTrend, 5 * 60_000);
-setInterval(pollEdgeHk, 2 * 60_000);
+setInterval(whenVisible(pollLive), LIVE_POLL_MS);
+setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);
+setInterval(whenVisible(pollTomorrow), FORECAST_POLL_MS);
+setInterval(whenVisible(pollTrend), 5 * 60_000);
+setInterval(whenVisible(pollEdgeHk), 2 * 60_000);
 fetchOmHourly();
-setInterval(fetchOmHourly, 15 * 60_000);
-setInterval(pollHourNowcast, 60_000);
-setInterval(() => { if (currentCity !== 'hk') pollCnCity(); }, 5 * 60_000);
+setInterval(whenVisible(fetchOmHourly), 15 * 60_000);
+setInterval(whenVisible(pollHourNowcast), 60_000);
+setInterval(whenVisible(() => { if (currentCity !== 'hk') pollCnCity(); }), 5 * 60_000);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { pollLive(); }
+  if (document.visibilityState === 'visible') {
+    pollLive(); pollEdgeHk();
+    if (currentCity !== 'hk') pollCnCity();
+  }
 });
 </script>
 </body>

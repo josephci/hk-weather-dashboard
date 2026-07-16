@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-07-16T00:10:07.232Z",
-  "sampleDays": 25,
+  "generatedAt": "2026-07-16T16:52:43.399Z",
+  "sampleDays": 27,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。",
   "max": {
-    "gfs_seamless": 1.55,
-    "ecmwf_ifs025": 0.95,
-    "icon_seamless": 1.58,
-    "ukmo_seamless": 0.33,
-    "gem_seamless": 1.32,
-    "jma_seamless": 0.94
+    "gfs_seamless": 1.38,
+    "ecmwf_ifs025": 0.83,
+    "icon_seamless": 1.47,
+    "ukmo_seamless": 0.19,
+    "gem_seamless": 1.23,
+    "jma_seamless": 0.79
   },
   "min": {}
 }

@@ -479,7 +479,8 @@ const FORECAST_POLL_MS = 10 * 60_000;
 // 如果你有部署 bias.json（見 update_bias.js），填返個raw URL，例如：
 // "https://raw.githubusercontent.com/你的用戶名/你的repo/main/bias.json"
 const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/bias.json";
-const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/history.csv";
+// history.csv依家住喺data branch（temp-alerts workflow每5分鐘寫嗰邊,main唔再有log commit）
+const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/data/history.csv";
 const PM_ENDPOINT = "/.netlify/functions/polymarket";
 
 // 非香港城市設定（結算站=機場座標，倫敦跟scan_cities.js嘅Heathrow convention）

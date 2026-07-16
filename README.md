@@ -31,7 +31,7 @@ Polymarket Gamma API     ┘   temperature/polymarket     (4城市tabs)
 | daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias |
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
-| alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv |
+| alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv(commit去data branch) |
 | watch.js | 本機(可選) | 秒級精度本地監察 |
 | latency_race.js | 本機(實驗) | 渠道延遲測量 |
 
@@ -46,6 +46,9 @@ Polymarket Gamma API     ┘   temperature/polymarket     (4城市tabs)
   結算源未逐隻驗證過,落注前對返market描述
 - aviationweather.gov嘅metar API有hours=參數可以攞返成日報文
   → METAR趨勢圖唔使自己儲,每次現攞現砌(有變化先算一點)
+- history.csv+alert_state.json嘅log commit住咗喺data branch(每2hr一個,
+  以前灌爆main history);bias.json/forecast_log.csv一日先兩個commit,留喺main
+  (BIAS_URL同scan_cities.js都讀main,唔值得搬)
 
 ## Secrets清單
 

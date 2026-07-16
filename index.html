@@ -465,7 +465,7 @@
       </div>
       <div id="cnForecastList"></div>
       <div class="station-line" style="margin-top:10px;">
-        <span style="font-size:11px;color:var(--muted);">「未校正」= 呢個城市未有實測bias紀錄（得香港有26日校正數據），已用std×1.4放大補償，edge要打七折看待</span>
+        <span style="font-size:11px;color:var(--muted);" id="cnBiasNote"></span>
       </div>
     </section>
 
@@ -1046,7 +1046,7 @@ async function pollCnCity() {
   renderCnLive();
   pollMetarTrend();
   try {
-    // 6模型今日預測（機場座標,無bias,std下限0.5+放大1.4補償）
+    // 6模型今日預測:有per-city bias(daily_log儲夠7日)就用,冇就std×1.4補償
     // 「今日」同Open-Meteo時區都用城市當地時區（倫敦同HK差成7-8個鐘）
     const today = cityLocalDate(city.tz);
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
@@ -1056,10 +1056,13 @@ async function pollCnCity() {
     if (!res.ok) throw new Error('Open-Meteo ' + res.status);
     const data = await res.json();
 
+    const cb = (await getBias()).cities?.[currentCity];
+    const cityBias = (cb?.max && Object.keys(cb.max).length) ? cb.max : null;
+
     const values = [];
     for (const mo of MODELS) {
       const arr = data.daily?.[`temperature_2m_max_${mo}`];
-      if (arr && arr[0] != null) values.push(arr[0]);
+      if (arr && arr[0] != null) values.push(arr[0] + (cityBias ? (cityBias[mo] || 0) : 0));
     }
     if (values.length < 2) throw new Error('模型數據不足');
 
@@ -1067,13 +1070,17 @@ async function pollCnCity() {
     const mean = values.reduce((a,b)=>a+b,0)/n;
     let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
     const spread = Math.max(...values) - Math.min(...values);
-    std = Math.max(std, 0.5) * 1.4; // 無bias校正,放大補償
+    std = Math.max(std, 0.5);
+    if (!cityBias) std *= 1.4; // 無bias校正,放大補償
 
     document.getElementById('cnMean').textContent = mean.toFixed(1)+'°';
     document.getElementById('cnStd').textContent = std.toFixed(1)+'°';
     document.getElementById('cnSpread').textContent = spread.toFixed(1)+'°';
     document.getElementById('cnTomorrowTitle').textContent =
-      `今日高溫預測 · ${n}模型（未校正）` + (spread >= 1.5 ? ' ⚠分歧較大' : '');
+      `今日高溫預測 · ${n}模型（${cityBias ? `✓已校正${cb.sampleDays}日` : '未校正'}）` + (spread >= 1.5 ? ' ⚠分歧較大' : '');
+    document.getElementById('cnBiasNote').textContent = cityBias
+      ? `已用${cb.sampleDays}日「模型vs METAR實測」紀錄做bias校正(daily_log自動累積,越多日越準)`
+      : `「未校正」= 呢個城市bias紀錄未夠7日(daily_log累積緊),已用std×1.4放大補償,edge要打七折看待`;
 
     const lo = Math.floor(mean - Math.max(4*std,3)), hi = Math.ceil(mean + Math.max(4*std,3));
     const probs = {};
@@ -1236,7 +1243,14 @@ async function trendModelProbs(cfg, unit) {
   if (!res.ok) throw new Error('Open-Meteo ' + res.status);
   const data = await res.json();
 
-  const bias = cfg.hasBias ? ((await getBias())['max'] || {}) : {};
+  // bias優先級:香港用bias.json嘅max;其他城市用cities[key](daily_log儲夠7日先有)
+  const biasAll = await getBias();
+  let bias = {}, corrected = false;
+  if (cfg.hasBias) { bias = biasAll['max'] || {}; corrected = true; }
+  else {
+    const cb = biasAll.cities?.[cfg.key];
+    if (cb?.max && Object.keys(cb.max).length) { bias = cb.max; corrected = true; }
+  }
   const values = [];
   for (const m of MODELS) {
     const arr = data.daily?.[`temperature_2m_max_${m}`];
@@ -1249,12 +1263,12 @@ async function trendModelProbs(cfg, unit) {
   const mean = values.reduce((a,b)=>a+b,0)/n;
   let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
   std = Math.max(std, unit === 'F' ? 0.9 : 0.5);
-  if (!cfg.hasBias) std *= 1.4;
+  if (!corrected) std *= 1.4;
 
   const lo = Math.floor(mean - 6*std) - 2, hi = Math.ceil(mean + 6*std) + 2;
   const probs = {};
   for (let b = lo; b <= hi; b++) probs[b] = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
-  return { probs, mean, std };
+  return { probs, mean, std, corrected };
 }
 
 async function pollTrending() {
@@ -1324,7 +1338,7 @@ async function pollTrending() {
       card.innerHTML = `
         <div class="panel-title">
           <span>#${i+1} ${esc(t.city.toUpperCase())}</span>
-          <span class="flag">${t.cfg?.hasBias ? '✓已校正' : '⚠未校正'}</span>
+          <span class="flag">${model?.corrected ? '✓已校正' : '⚠未校正'}</span>
         </div>
         <div class="station-line" style="margin-bottom:8px;">
           <span>✈️ ${t.cfg ? esc(t.cfg.icao) + '：' : ''}<span style="font-family:var(--mono);color:var(--text);">${t.cfg ? metarStr : '未識別城市'}</span>${metar?.obsTime ? ` <span style="font-size:11px;color:var(--muted);">${formatRelativeTime(metar.obsTime)}</span>` : ''}</span>

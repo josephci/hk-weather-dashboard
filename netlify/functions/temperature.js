@@ -11,6 +11,18 @@
 //    兩種都匹配，穩陣啲。
 // ------------------------------------------------------------
 
+// aviationweather嘅reportTime格式係"2026-07-16 11:00:00"(UTC但冇Z),
+// 直接俾new Date()會當本地時間解析——統一喺呢度轉做ISO UTC先俾前端
+function metarTimeIso(m) {
+  if (typeof m.obsTime === "number") return new Date(m.obsTime * 1000).toISOString();
+  const t = m.reportTime || m.obsTime;
+  if (!t) return null;
+  const s = String(t);
+  try {
+    return /Z$|[+-]\d\d:?\d\d$/.test(s) ? new Date(s).toISOString() : new Date(s.replace(" ", "T") + "Z").toISOString();
+  } catch { return null; }
+}
+
 const LIVE_CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_1min_temperature.csv";
 const MAXMIN_CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_since_midnight_maxmin.csv";
 const STATION_PATTERN = /^(香港天文台|HK Observatory|Hong Kong Observatory)$/i;
@@ -72,7 +84,7 @@ async function fetchMetar() {
     if (m.icaoId && typeof m.temp === "number") {
       out[m.icaoId] = {
         tempC: m.temp,
-        obsTime: m.reportTime || m.obsTime || null,
+        obsTime: metarTimeIso(m),
       };
     }
   }
@@ -104,8 +116,9 @@ async function fetchMetarHistory(icao, hours) {
   const arr = await res.json();
   const out = [];
   for (const m of Array.isArray(arr) ? arr : []) {
-    if (typeof m.temp === "number" && (m.reportTime || m.obsTime)) {
-      out.push({ tempC: m.temp, obsTime: m.reportTime || m.obsTime });
+    const iso = metarTimeIso(m);
+    if (typeof m.temp === "number" && iso) {
+      out.push({ tempC: m.temp, obsTime: iso });
     }
   }
   return out;
@@ -127,7 +140,7 @@ exports.handler = async function (event) {
       const metars = {};
       for (const m of Array.isArray(arr) ? arr : []) {
         if (m.icaoId && typeof m.temp === "number") {
-          metars[m.icaoId] = { tempC: m.temp, obsTime: m.reportTime || m.obsTime || null };
+          metars[m.icaoId] = { tempC: m.temp, obsTime: metarTimeIso(m) };
         }
       }
       return {

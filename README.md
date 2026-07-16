@@ -28,7 +28,7 @@ Polymarket Gamma API     ┘   temperature/polymarket     (4城市+🌍熱門tab
 | netlify/functions/temperature.js | Netlify | 代理HKO CSV+METAR(即時/歷史/任意機場)(解決CORS) |
 | netlify/functions/polymarket.js | Netlify | 代理Gamma API:單城市現價+trending市場發現 |
 | worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
-| daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias |
+| daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias(HK+滬京倫4城市) |
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
 | alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv(commit去data branch) |
@@ -56,6 +56,12 @@ Polymarket Gamma API     ┘   temperature/polymarket     (4城市+🌍熱門tab
   美國°F市場全部兩度一格→模型%以前一直被低估近半,舊edge訊號要重新審視
 - 熱門tab嘅城市→ICAO機場對照係推斷(NYC=KLGA,倫敦=EGLL等),未逐隻market
   驗證結算源,落注前要對返market描述
+- 遠程城市bias(2026-07-16起累積):daily_log每朝記ZSPD/ZBAA/EGLL嘅6模型預測
+  (forecast_log_{city}.csv),每晚用METAR 48hr報文結算「當地昨日」最高
+  (揀昨日因為倫敦嗰邊HK23:45先下晝);儲夠7日bias.json出cities key,
+  dashboard/scanner自動由「未校正」轉「✓已校正」,std×1.4補償同時取消
+- aviationweather嘅reportTime係"YYYY-MM-DD HH:MM:SS"UTC但冇Z,直接
+  new Date()會當本地時間——一律經metarTimeIso()轉ISO先用
 
 ## Secrets清單
 

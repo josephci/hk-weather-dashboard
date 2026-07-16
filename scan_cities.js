@@ -102,7 +102,7 @@ function normalCdf(x, mean, std) {
 
 function loadBias() {
   if (!fs.existsSync(BIAS_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(BIAS_FILE, "utf-8")).max || {}; } catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(BIAS_FILE, "utf-8")) || {}; } catch { return {}; }
 }
 
 function cityLocalDate(tz) {
@@ -158,7 +158,14 @@ async function cityModelProbs(city, cityKey, unit) {
   if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
   const data = await res.json();
 
-  const bias = city.hasBias ? loadBias() : {};
+  // bias優先級:香港用max;其他城市用cities[key](daily_log儲夠7日先有)
+  const biasAll = loadBias();
+  let bias = {}, corrected = false;
+  if (city.hasBias) { bias = biasAll.max || {}; corrected = true; }
+  else {
+    const cb = biasAll.cities?.[cityKey];
+    if (cb?.max && Object.keys(cb.max).length) { bias = cb.max; corrected = true; }
+  }
   const values = [];
   for (const m of MODELS) {
     const arr = data.daily?.[`temperature_2m_max_${m}`];
@@ -174,7 +181,7 @@ async function cityModelProbs(city, cityKey, unit) {
   const mean = values.reduce((a,b)=>a+b,0)/n;
   let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
   std = Math.max(std, unit === "F" ? STD_FLOOR * 1.8 : STD_FLOOR);
-  if (!city.hasBias) std *= NO_BIAS_STD_INFLATE;
+  if (!corrected) std *= NO_BIAS_STD_INFLATE;
 
   // 逐度機率map（範圍闊啲，°F可以去到110+）
   const lo = Math.floor(mean - 6 * std) - 2, hi = Math.ceil(mean + 6 * std) + 2;
@@ -182,7 +189,7 @@ async function cityModelProbs(city, cityKey, unit) {
   for (let b = lo; b <= hi; b++) {
     probs[b] = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
   }
-  return { probs, mean, std, lo, hi };
+  return { probs, mean, std, lo, hi, corrected };
 }
 
 function bucketModelProb(label, model) {
@@ -237,7 +244,7 @@ async function main() {
           allEdges.push({
             city: mkt.cityKey, title: mkt.title, slug: mkt.slug,
             label: b.label, market: b.yesPrice, model: modelPct, edge,
-            corrected: !!mkt.city.hasBias, unit: mkt.unit,
+            corrected: model.corrected, unit: mkt.unit,
             meanStr: `${model.mean.toFixed(1)}°${mkt.unit} σ${model.std.toFixed(1)}`,
           });
         }
@@ -268,7 +275,7 @@ async function main() {
   const msg = `🌍 <b>全球溫度市場Edge掃描</b>（${new Date().toISOString().slice(0,16).replace("T"," ")} UTC）\n` +
     `掃描${markets.length}個市場，發現${allEdges.length}個edge，Top ${top.length}：\n\n` +
     lines.join("\n\n") +
-    `\n\n⚠️ 「未校正」城市冇本地bias數據，edge可信度打七折；只有香港係經26日實測校正。`;
+    `\n\n⚠️ 「未校正」城市冇本地bias數據，edge可信度打七折。香港+上海/北京/倫敦(daily_log儲夠7日後)係實測校正。`;
 
   await sendTelegram(msg);
   console.log(`\n✅ 已推送 ${top.length} 個top edges`);

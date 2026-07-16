@@ -13,7 +13,13 @@
  *     攞天文台總部今日實測最高溫，填返落 forecast_log.csv 對應行，
  *     然後用全部已完成嘅記錄重新計算每個模型嘅bias → bias.json
  *
- * 累積夠7日數據就開始出bias，數據越多越準。
+ * 遠程城市擴展（上海ZSPD/北京ZBAA/倫敦EGLL）：
+ *   forecast模式順手記埋各城市當地「今日」嘅6模型預測
+ *     → forecast_log_{city}.csv（每城市一個檔,唔郁香港個檔）
+ *   settle模式結算各城市當地「昨日」：用METAR過去48小時報文搵當日最高
+ *     （揀昨日因為倫敦嗰邊HK 23:45先係下晝,當日未完;結算口徑=METAR整數,
+ *       同Polymarket結算源一致）
+ *   儲夠7日就寫入bias.json嘅cities key,dashboard/scanner自動轉「已校正」
  * ------------------------------------------------------------
  */
 
@@ -29,8 +35,33 @@ const MAXMIN_CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/regional
 const STATION_PATTERN = /^(香港天文台|HK Observatory|Hong Kong Observatory)$/i;
 const MIN_SAMPLES = 7; // 至少幾多日數據先出bias
 
+// 遠程城市（結算站=機場,座標同dashboard/scan_cities一致）
+const REMOTE_CITIES = {
+  shanghai: { icao: "ZSPD", lat: 31.143,  lon: 121.805, tz: "Asia/Shanghai" },
+  beijing:  { icao: "ZBAA", lat: 40.080,  lon: 116.585, tz: "Asia/Shanghai" },
+  london:   { icao: "EGLL", lat: 51.4787, lon: -0.4497, tz: "Europe/London" },
+};
+
 function hkToday() {
   return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function cityLocalDate(tz, d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+
+// aviationweather嘅reportTime係"2026-07-16 11:00:00"(UTC但冇Z),
+// 直接new Date()會當本地時間——要自己補返個Z
+function metarTimeIso(m) {
+  if (typeof m.obsTime === "number") return new Date(m.obsTime * 1000).toISOString();
+  const t = m.reportTime || m.obsTime;
+  if (!t) return null;
+  const s = String(t);
+  return /Z$|[+-]\d\d:?\d\d$/.test(s) ? new Date(s).toISOString() : new Date(s.replace(" ", "T") + "Z").toISOString();
+}
+
+function logFileFor(cityKey) {
+  return path.join(__dirname, `forecast_log_${cityKey}.csv`);
 }
 
 function parseArgs() {
@@ -46,9 +77,9 @@ function parseArgs() {
 // CSV欄位: date, gfs, ecmwf, icon, ukmo, gem, jma, realized
 const HEADER = "date," + MODELS.join(",") + ",realized";
 
-function loadLog() {
-  if (!fs.existsSync(FORECAST_LOG)) return [];
-  const lines = fs.readFileSync(FORECAST_LOG, "utf-8").trim().split(/\r?\n/).slice(1);
+function loadLog(file = FORECAST_LOG) {
+  if (!fs.existsSync(file)) return [];
+  const lines = fs.readFileSync(file, "utf-8").trim().split(/\r?\n/).slice(1);
   return lines.map((line) => {
     const parts = line.split(",");
     const row = { date: parts[0], forecasts: {}, realized: parts[MODELS.length + 1] || "" };
@@ -57,12 +88,29 @@ function loadLog() {
   });
 }
 
-function saveLog(rows) {
+function saveLog(rows, file = FORECAST_LOG) {
+  rows.sort((a, b) => a.date.localeCompare(b.date)); // settle昨日+forecast今日可能亂序
   const lines = [HEADER];
   for (const r of rows) {
     lines.push([r.date, ...MODELS.map((m) => r.forecasts[m] ?? ""), r.realized ?? ""].join(","));
   }
-  fs.writeFileSync(FORECAST_LOG, lines.join("\n") + "\n");
+  fs.writeFileSync(file, lines.join("\n") + "\n");
+}
+
+// 由已完成記錄計bias(所有城市共用同一條公式)
+function computeBias(rows) {
+  const complete = rows.filter((r) => r.realized !== "" && MODELS.some((m) => r.forecasts[m] !== ""));
+  const biasMax = {};
+  for (const m of MODELS) {
+    const diffs = complete
+      .filter((r) => r.forecasts[m] !== "")
+      .map((r) => parseFloat(r.realized) - parseFloat(r.forecasts[m]))
+      .filter((d) => !Number.isNaN(d));
+    if (diffs.length >= MIN_SAMPLES) {
+      biasMax[m] = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) * 100) / 100;
+    }
+  }
+  return { sampleDays: complete.length, max: biasMax };
 }
 
 // ---------- forecast模式 ----------
@@ -86,6 +134,36 @@ async function runForecast() {
 
   saveLog(rows);
   console.log(`✅ 已記錄 ${today} 嘅模型預測:`, MODELS.map((m) => `${m}=${row.forecasts[m] || "N/A"}`).join(" "));
+
+  // ---- 遠程城市:記當地「今日」預測(邊個城市fail唔影響其他) ----
+  for (const [key, cfg] of Object.entries(REMOTE_CITIES)) {
+    try {
+      await forecastRemoteCity(key, cfg);
+    } catch (e) {
+      console.log(`⚠️ ${key} forecast失敗(照繼續): ${e.message}`);
+    }
+  }
+}
+
+async function forecastRemoteCity(key, cfg) {
+  const today = cityLocalDate(cfg.tz);
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${cfg.lat}&longitude=${cfg.lon}` +
+    `&daily=temperature_2m_max&timezone=${encodeURIComponent(cfg.tz)}&models=${MODELS.join(",")}` +
+    `&start_date=${today}&end_date=${today}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
+  const data = await res.json();
+
+  const file = logFileFor(key);
+  const rows = loadLog(file);
+  let row = rows.find((r) => r.date === today);
+  if (!row) { row = { date: today, forecasts: {}, realized: "" }; rows.push(row); }
+  for (const m of MODELS) {
+    const arr = data.daily?.[`temperature_2m_max_${m}`];
+    if (arr && arr[0] != null) row.forecasts[m] = arr[0].toFixed(1);
+  }
+  saveLog(rows, file);
+  console.log(`✅ ${key}(${cfg.icao}) 已記錄 ${today} 預測`);
 }
 
 // ---------- settle模式 ----------
@@ -109,34 +187,69 @@ async function runSettle() {
   saveLog(rows);
   console.log(`✅ 已記錄 ${today} 實測最高溫: ${realized.toFixed(1)}°C`);
 
-  // ---- 重新計算bias ----
-  const complete = rows.filter((r) => r.realized !== "" && MODELS.some((m) => r.forecasts[m] !== ""));
-  const biasMax = {};
-  for (const m of MODELS) {
-    const diffs = complete
-      .filter((r) => r.forecasts[m] !== "")
-      .map((r) => parseFloat(r.realized) - parseFloat(r.forecasts[m]))
-      .filter((d) => !Number.isNaN(d));
-    if (diffs.length >= MIN_SAMPLES) {
-      biasMax[m] = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) * 100) / 100;
+  // ---- 遠程城市:結算當地「昨日」+計bias ----
+  // 讀返舊bias.json,邊個城市今次fail就保留佢上次嘅值
+  let oldBias = {};
+  try { oldBias = JSON.parse(fs.readFileSync(BIAS_FILE, "utf-8")); } catch { /* 冇就算 */ }
+  const cities = { ...(oldBias.cities || {}) };
+  for (const [key, cfg] of Object.entries(REMOTE_CITIES)) {
+    try {
+      cities[key] = await settleRemoteCity(key, cfg);
+    } catch (e) {
+      console.log(`⚠️ ${key} settle失敗(保留舊bias): ${e.message}`);
     }
   }
 
+  // ---- 重新計算香港bias ----
+  const hk = computeBias(rows);
+
   const output = {
     generatedAt: new Date().toISOString(),
-    sampleDays: complete.length,
-    note: "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。",
-    max: biasMax,
+    sampleDays: hk.sampleDays,
+    note: "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
+    max: hk.max,
     min: {}, // 暫時只做max（Polymarket香港市場以最高溫為主）
+    cities,
   };
   fs.writeFileSync(BIAS_FILE, JSON.stringify(output, null, 2));
 
-  if (Object.keys(biasMax).length === 0) {
-    console.log(`ℹ️ 數據仲未夠${MIN_SAMPLES}日，bias.json暫時空（而家有${complete.length}日）。繼續累積。`);
+  if (Object.keys(hk.max).length === 0) {
+    console.log(`ℹ️ 香港數據仲未夠${MIN_SAMPLES}日，bias暫時空（而家有${hk.sampleDays}日）。繼續累積。`);
   } else {
-    console.log("✅ bias.json已更新:");
-    Object.entries(biasMax).forEach(([m, b]) => console.log(`  ${m.padEnd(18)}: ${b >= 0 ? "+" : ""}${b}°C`));
+    console.log("✅ bias.json已更新(香港):");
+    Object.entries(hk.max).forEach(([m, b]) => console.log(`  ${m.padEnd(18)}: ${b >= 0 ? "+" : ""}${b}°C`));
   }
+  for (const [key, c] of Object.entries(cities)) {
+    const n = Object.keys(c.max || {}).length;
+    console.log(`  ${key}: ${c.sampleDays}日數據${n ? `,${n}個模型有bias` : `(未夠${MIN_SAMPLES}日,未出bias)`}`);
+  }
+}
+
+// 結算一個遠程城市當地「昨日」嘅METAR最高溫,回傳最新bias
+async function settleRemoteCity(key, cfg) {
+  const target = cityLocalDate(cfg.tz, new Date(Date.now() - 24 * 3600 * 1000));
+  const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${cfg.icao}&format=json&hours=48`);
+  if (!res.ok) throw new Error(`METAR API ${res.status}`);
+  const arr = await res.json();
+
+  let maxT = null;
+  for (const m of Array.isArray(arr) ? arr : []) {
+    if (typeof m.temp !== "number") continue;
+    const iso = metarTimeIso(m);
+    if (!iso || cityLocalDate(cfg.tz, new Date(iso)) !== target) continue;
+    if (maxT === null || m.temp > maxT) maxT = m.temp;
+  }
+  if (maxT === null) throw new Error(`搵唔到${target}嘅${cfg.icao} METAR`);
+
+  const file = logFileFor(key);
+  const rows = loadLog(file);
+  let row = rows.find((r) => r.date === target);
+  if (!row) { row = { date: target, forecasts: {}, realized: "" }; rows.push(row); }
+  row.realized = String(maxT);
+  saveLog(rows, file);
+  console.log(`✅ ${key}(${cfg.icao}) 已結算 ${target} 實測最高: ${maxT}°C`);
+
+  return computeBias(rows);
 }
 
 async function main() {

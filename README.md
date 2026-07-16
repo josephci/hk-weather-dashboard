@@ -1,6 +1,6 @@
 # HK Weather Dashboard — Polymarket溫度市場交易系統
 
-香港深度線 + 上海北京METAR線 + 全球49市場掃描。
+香港深度線 + 上海北京倫敦METAR線 + 全球49市場掃描。
 
 ## 系統架構
 
@@ -10,9 +10,9 @@
 HKO 1min CSV(0.1°,慢8分) ┐
 HKO rhrread(整數,快4分)   ├→ Cloudflare Worker(每分鐘) → Telegram警報
 HKO warnsum警告          ┘   雙水喉+破關+edge+METAR
-ZSPD/ZBAA METAR          
+ZSPD/ZBAA/EGLL METAR     
 Open-Meteo 6模型         ┬→ Netlify Functions        → Dashboard網頁
-Polymarket Gamma API     ┘   temperature/polymarket     (3城市tabs)
+Polymarket Gamma API     ┘   temperature/polymarket     (4城市tabs)
                          
                          GitHub Actions:
                          - daily-bias(朝晚): bias.json自動校正
@@ -24,8 +24,8 @@ Polymarket Gamma API     ┘   temperature/polymarket     (3城市tabs)
 
 | 檔案 | 跑喺邊 | 做乜 |
 |---|---|---|
-| index.html | Netlify | 3城市dashboard:即時/機率/走勢圖/Edge表 |
-| netlify/functions/temperature.js | Netlify | 代理HKO CSV+3機場METAR(解決CORS) |
+| index.html | Netlify | 4城市dashboard:即時/機率/走勢圖/METAR趨勢/Edge表 |
+| netlify/functions/temperature.js | Netlify | 代理HKO CSV+4機場METAR+歷史METAR(解決CORS) |
 | netlify/functions/polymarket.js | Netlify | 代理Gamma API攞market現價 |
 | worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
 | daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias |
@@ -42,6 +42,10 @@ Polymarket Gamma API     ┘   temperature/polymarket     (3城市tabs)
 - 颱風/雷暴日模型可以錯5σ(2026-07-05實例:預測30.5°實開33°) → 警告日std×1.8
 - 上海北京market結算源=機場METAR整數,冇小數呢回事
 - Wunderground嘅x.1°係°F換算殘影,唔係真精度
+- 倫敦tab跟scan_cities.js嘅convention用Heathrow(EGLL);Polymarket London market嘅
+  結算源未逐隻驗證過,落注前對返market描述
+- aviationweather.gov嘅metar API有hours=參數可以攞返成日報文
+  → METAR趨勢圖唔使自己儲,每次現攞現砌(有變化先算一點)
 
 ## Secrets清單
 

@@ -327,6 +327,7 @@
     <button class="city-tab active" data-city="hk">香港</button>
     <button class="city-tab" data-city="shanghai">上海</button>
     <button class="city-tab" data-city="beijing">北京</button>
+    <button class="city-tab" data-city="london">倫敦</button>
   </div>
 
   <div id="view-hk" style="display:contents;">
@@ -427,8 +428,18 @@
         <span id="cnRecordTime">讀取中…</span>
       </div>
       <div class="station-line" style="margin-top:6px;">
-        <span style="font-size:12px;">結算源=METAR整數°C，呢個讀數就係全精度</span>
+        <span style="font-size:12px;" id="cnSettleNote">結算源=METAR整數°C，呢個讀數就係全精度</span>
       </div>
+    </section>
+
+    <section class="ladder-panel" style="margin-top:16px;">
+      <div class="panel-title">
+        <span>METAR讀數趨勢（有變化先記一點）</span>
+        <span class="flag" id="metarTrendMax"></span>
+      </div>
+      <svg class="trend-svg" id="metarTrendSvg" viewBox="0 0 360 140" preserveAspectRatio="none"></svg>
+      <div id="metarChangeList" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px;line-height:1.8;"></div>
+      <div class="station-line" style="margin-top:4px;"><span id="metarTrendNote" style="font-size:12px;color:var(--muted);">載入中…</span></div>
     </section>
 
     <section class="ladder-panel" style="margin-top:16px;">
@@ -471,12 +482,25 @@ const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboar
 const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/history.csv";
 const PM_ENDPOINT = "/.netlify/functions/polymarket";
 
-// 中國城市設定（結算站=機場座標）
-const CN_CITIES = {
-  shanghai: { name: "上海浦東機場 (ZSPD)", icao: "ZSPD", lat: 31.143, lon: 121.805, pmCity: "shanghai" },
-  beijing:  { name: "北京首都機場 (ZBAA)", icao: "ZBAA", lat: 40.080, lon: 116.585, pmCity: "beijing" },
+// 非香港城市設定（結算站=機場座標，倫敦跟scan_cities.js嘅Heathrow convention）
+const REMOTE_CITIES = {
+  shanghai: { name: "上海浦東機場 (ZSPD)", icao: "ZSPD", lat: 31.143, lon: 121.805, pmCity: "shanghai", tz: "Asia/Shanghai",
+              note: "結算源=METAR整數°C，呢個讀數就係全精度" },
+  beijing:  { name: "北京首都機場 (ZBAA)", icao: "ZBAA", lat: 40.080, lon: 116.585, pmCity: "beijing", tz: "Asia/Shanghai",
+              note: "結算源=METAR整數°C，呢個讀數就係全精度" },
+  london:   { name: "倫敦希斯路機場 (EGLL)", icao: "EGLL", lat: 51.4787, lon: -0.4497, pmCity: "london", tz: "Europe/London",
+              note: "用希斯路EGLL METAR；落注前對返market描述嘅結算源" },
 };
 let currentCity = "hk";
+
+// 城市當地日期/時間工具
+function cityLocalDate(tz, d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+function cityLocalMins(tz, d = new Date()) {
+  const [h, m] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(d).split(':').map(Number);
+  return h * 60 + m;
+}
 let lastMetars = null; // 由pollLive儲低,俾中國view用
 
 // ============================================================
@@ -592,6 +616,19 @@ function risePotential(h) {
   return 0;
 }
 
+// bias.json共用cache：pollForecast同pollTomorrow以前每10分鐘各自fetch一次，
+// 依家共用一份，10分鐘內唔會重複攞
+let biasCache = { at: 0, data: null };
+async function getBias() {
+  if (!BIAS_URL) return {};
+  if (biasCache.data && Date.now() - biasCache.at < 10 * 60_000) return biasCache.data;
+  try {
+    const bRes = await fetch(BIAS_URL + '?_=' + Date.now(), { cache: 'no-store' });
+    if (bRes.ok) biasCache = { at: Date.now(), data: await bRes.json() };
+  } catch { /* 冇bias就照跑 */ }
+  return biasCache.data || {};
+}
+
 async function pollForecast() {
   try {
     const field = METRIC === 'max' ? 'temperature_2m_max' : 'temperature_2m_min';
@@ -603,13 +640,7 @@ async function pollForecast() {
     if (!res.ok) throw new Error('Open-Meteo ' + res.status);
     const data = await res.json();
 
-    let bias = {};
-    if (BIAS_URL) {
-      try {
-        const bRes = await fetch(BIAS_URL + '?_=' + Date.now(), { cache: 'no-store' });
-        if (bRes.ok) bias = (await bRes.json())[METRIC] || {};
-      } catch { /* 冇bias就照跑 */ }
-    }
+    const bias = (await getBias())[METRIC] || {};
 
     const values = [];
     for (const model of MODELS) {
@@ -656,13 +687,7 @@ async function pollTomorrow() {
     if (!res.ok) throw new Error('Open-Meteo ' + res.status);
     const data = await res.json();
 
-    let bias = {};
-    if (BIAS_URL) {
-      try {
-        const bRes = await fetch(BIAS_URL + '?_=' + Date.now(), { cache: 'no-store' });
-        if (bRes.ok) bias = (await bRes.json())['max'] || {};
-      } catch { /* 冇bias就照跑 */ }
-    }
+    const bias = (await getBias())['max'] || {};
 
     const values = [];
     for (const model of MODELS) {
@@ -936,14 +961,15 @@ async function pollEdgeHk() {
 }
 
 // ============================================================
-// 上海/北京 view
+// 上海/北京/倫敦 view
 // ============================================================
 let cnModelProbs = null;
 
 function renderCnLive() {
-  const city = CN_CITIES[currentCity];
+  const city = REMOTE_CITIES[currentCity];
   if (!city) return;
   document.getElementById('cnStationPlace').textContent = city.name;
+  document.getElementById('cnSettleNote').textContent = city.note;
   const m = lastMetars?.[city.icao];
   if (m && typeof m.tempC === 'number') {
     document.getElementById('cnTempValue').innerHTML = `${Math.round(m.tempC)}<span class="unit">°C</span>`;
@@ -956,14 +982,16 @@ function renderCnLive() {
 }
 
 async function pollCnCity() {
-  const city = CN_CITIES[currentCity];
+  const city = REMOTE_CITIES[currentCity];
   if (!city) return;
   renderCnLive();
+  pollMetarTrend();
   try {
     // 6模型今日預測（機場座標,無bias,std下限0.5+放大1.4補償）
-    const today = new Date(Date.now() + 8*3600*1000).toISOString().slice(0, 10);
+    // 「今日」同Open-Meteo時區都用城市當地時區（倫敦同HK差成7-8個鐘）
+    const today = cityLocalDate(city.tz);
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
-      `&daily=temperature_2m_max&timezone=Asia%2FShanghai&models=${MODELS.join(',')}` +
+      `&daily=temperature_2m_max&timezone=${encodeURIComponent(city.tz)}&models=${MODELS.join(',')}` +
       `&start_date=${today}&end_date=${today}&_=${Date.now()}`;
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error('Open-Meteo ' + res.status);
@@ -1023,6 +1051,84 @@ async function pollCnCity() {
   } catch (e) {
     document.getElementById('edgeListCn').innerHTML = `<div class="edge-row"><span class="edge-flat">攞唔到: ${e.message}</span></div>`;
   }
+}
+
+// ============================================================
+// METAR讀數趨勢（結算源逐次讀數，有變化先記一點）
+// 經temperature function攞返過去26小時報文 → 篩城市當地「今日」
+// → 只保留同上一個讀數唔同嘅（首個必留）→ step chart
+// ============================================================
+async function pollMetarTrend() {
+  const city = REMOTE_CITIES[currentCity];
+  if (!city) return;
+  const note = document.getElementById('metarTrendNote');
+  try {
+    const res = await fetch(`${TEMP_ENDPOINT}?history=${city.icao}&_=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('function ' + res.status);
+    const json = await res.json();
+    if (!Array.isArray(json.history) || !json.history.length) throw new Error('未有歷史METAR');
+
+    const today = cityLocalDate(city.tz);
+    const pts = json.history
+      .map(h => ({ d: new Date(h.obsTime), v: h.tempC }))
+      .filter(p => !Number.isNaN(p.d.getTime()) && typeof p.v === 'number' && cityLocalDate(city.tz, p.d) === today)
+      .sort((a, b) => a.d - b.d);
+    if (!pts.length) { note.textContent = '城市當地今日仲未有METAR報文'; return; }
+
+    // 有變化先記：連續相同讀數壓縮成一點
+    const changes = [];
+    for (const p of pts) {
+      if (!changes.length || changes[changes.length - 1].v !== p.v) {
+        changes.push({ mins: cityLocalMins(city.tz, p.d), v: p.v });
+      }
+    }
+    renderMetarTrend(changes, pts.length, city);
+  } catch (e) {
+    note.textContent = 'METAR趨勢攞唔到：' + e.message;
+  }
+}
+
+function fmtMetarTemp(v) { return Number.isInteger(v) ? String(v) : v.toFixed(1); }
+function fmtMins(mins) { return `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`; }
+
+function renderMetarTrend(changes, totalReports, city) {
+  const svg = document.getElementById('metarTrendSvg');
+  const listEl = document.getElementById('metarChangeList');
+  const note = document.getElementById('metarTrendNote');
+  const maxEl = document.getElementById('metarTrendMax');
+
+  const maxV = Math.max(...changes.map(c => c.v));
+  maxEl.textContent = `今日max ${fmtMetarTemp(maxV)}°`;
+
+  // 變化記錄列表（半個鐘一份報文,通常一日<10次變化）
+  listEl.textContent = changes.map(c => `${fmtMins(c.mins)} ${fmtMetarTemp(c.v)}°`).join(' → ');
+
+  const W = 360, H = 140, PAD = 24;
+  const nowMins = cityLocalMins(city.tz);
+  const vLo = Math.min(...changes.map(c => c.v)) - 1;
+  const vHi = maxV + 1;
+  const x = (m) => PAD + (m / 1440) * (W - PAD * 2);
+  const y = (v) => H - PAD - ((v - vLo) / (vHi - vLo)) * (H - PAD * 2);
+
+  // Step path：每個讀數維持到下一次變化，最尾延到而家
+  let path = `M${x(changes[0].mins).toFixed(1)},${y(changes[0].v).toFixed(1)}`;
+  for (let i = 1; i < changes.length; i++) {
+    path += ` L${x(changes[i].mins).toFixed(1)},${y(changes[i-1].v).toFixed(1)}`;
+    path += ` L${x(changes[i].mins).toFixed(1)},${y(changes[i].v).toFixed(1)}`;
+  }
+  const lastV = changes[changes.length - 1].v;
+  path += ` L${x(Math.max(nowMins, changes[changes.length - 1].mins)).toFixed(1)},${y(lastV).toFixed(1)}`;
+
+  const peak = changes.find(c => c.v === maxV);
+  svg.innerHTML =
+    `<line class="trend-max-line" x1="${PAD}" y1="${y(maxV)}" x2="${W-PAD}" y2="${y(maxV)}"/>` +
+    `<path class="trend-line" d="${path}"/>` +
+    `<circle cx="${x(peak.mins)}" cy="${y(peak.v)}" r="3" fill="var(--warm)"/>` +
+    `<text class="trend-label" x="${PAD}" y="${y(maxV)-5}">METAR max ${fmtMetarTemp(maxV)}°（結算值至今）</text>` +
+    `<text class="trend-label" x="${PAD}" y="${H-6}">00:00</text>` +
+    `<text class="trend-label" x="${W-PAD-30}" y="${H-6}">24:00</text>`;
+
+  note.textContent = `今日${totalReports}份報文 · ${changes.length}次變化 · 最新 ${fmtMetarTemp(lastV)}°（當地 ${fmtMins(changes[changes.length-1].mins)} 起）`;
 }
 
 // ============================================================

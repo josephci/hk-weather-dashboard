@@ -5,23 +5,30 @@
 //       經自己function代理=冇CORS風險，slug直接命中=payload細。
 //
 // 用法：/.netlify/functions/polymarket?city=hong-kong
-//       city支援: hong-kong | shanghai | beijing
+//       city支援: hong-kong | shanghai | beijing | london
 // ------------------------------------------------------------
 
-const SUPPORTED = ["hong-kong", "shanghai", "beijing"];
+// 每個城市用自己當地時區計「今日」（倫敦同香港差7-8個鐘，唔可以齊用HK時間）
+const CITY_TZ = {
+  "hong-kong": "Asia/Hong_Kong",
+  "shanghai": "Asia/Shanghai",
+  "beijing": "Asia/Shanghai",
+  "london": "Europe/London",
+};
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 
 exports.handler = async function (event) {
   try {
     const city = (event.queryStringParameters?.city || "hong-kong").toLowerCase();
-    if (!SUPPORTED.includes(city)) {
-      return { statusCode: 400, body: JSON.stringify({ error: `city要係: ${SUPPORTED.join("/")}` }) };
+    if (!CITY_TZ[city]) {
+      return { statusCode: 400, body: JSON.stringify({ error: `city要係: ${Object.keys(CITY_TZ).join("/")}` }) };
     }
 
-    // 三個城市都係UTC+8，用香港時間計「今日」
-    const hk = new Date(Date.now() + 8 * 3600 * 1000);
-    const y = hk.getUTCFullYear(), m = hk.getUTCMonth(), d = hk.getUTCDate();
-    const slug = `highest-temperature-in-${city}-on-${MONTHS[m]}-${d}`;
+    const dateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: CITY_TZ[city], year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date()); // YYYY-MM-DD
+    const [, m, d] = dateStr.split("-").map(Number);
+    const slug = `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}`;
 
     const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
     if (!res.ok) {

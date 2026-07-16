@@ -59,11 +59,12 @@ async function fetchMaxMin() {
   return null;
 }
 
-// METAR（VHHH赤鱲角+ZSPD浦東+ZBAA首都）：航空氣象報文，發佈節奏獨立。
+// METAR（VHHH赤鱲角+ZSPD浦東+ZBAA首都+EGLL希斯路）：航空氣象報文，發佈節奏獨立。
 // ⚠️ VHHH做香港平行數據源（機場≠總部，差1-2°C，睇趨勢用）；
-//   ZSPD/ZBAA就係上海北京market嘅結算源本身（METAR整數=全精度）。
+//   ZSPD/ZBAA就係上海北京market嘅結算源本身（METAR整數=全精度）；
+//   EGLL跟scan_cities.js嘅倫敦=Heathrow convention。
 async function fetchMetar() {
-  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA&format=json");
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLL&format=json");
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};
@@ -94,7 +95,43 @@ async function fetchRain() {
   return { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
 }
 
-exports.handler = async function () {
+// 歷史METAR序列：?history=ZSPD&hours=26
+// 用aviationweather嘅hours參數攞返成日報文，俾前端畫「讀數變化趨勢」。
+// 唔會逐次poll都夾埋（payload會大好多），前端獨立每5分鐘先攞一次。
+async function fetchMetarHistory(icao, hours) {
+  const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=${hours}`);
+  if (!res.ok) throw new Error(`METAR history API 錯誤: ${res.status}`);
+  const arr = await res.json();
+  const out = [];
+  for (const m of Array.isArray(arr) ? arr : []) {
+    if (typeof m.temp === "number" && (m.reportTime || m.obsTime)) {
+      out.push({ tempC: m.temp, obsTime: m.reportTime || m.obsTime });
+    }
+  }
+  return out;
+}
+
+exports.handler = async function (event) {
+  const qp = event?.queryStringParameters || {};
+
+  if (qp.history) {
+    const icao = String(qp.history).toUpperCase();
+    if (!/^[A-Z]{4}$/.test(icao)) {
+      return { statusCode: 400, body: JSON.stringify({ error: "history要係4位ICAO代碼" }) };
+    }
+    const hours = Math.min(Math.max(parseInt(qp.hours, 10) || 26, 1), 48);
+    try {
+      const history = await fetchMetarHistory(icao, hours);
+      return {
+        statusCode: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store, no-cache, must-revalidate" },
+        body: JSON.stringify({ icao, history }),
+      };
+    } catch (e) {
+      return { statusCode: 502, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
   const [liveResult, maxMinResult, metarResult, rainResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar(), fetchRain()]);
 
   const response = {};

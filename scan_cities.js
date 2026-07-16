@@ -197,6 +197,10 @@ function bucketModelProb(label, model) {
   };
   if (t.includes("higher") || t.includes("above")) return sum(deg, model.hi);
   if (t.includes("below") || t.includes("lower")) return sum(model.lo, deg);
+  // 「86-87°F」兩度一格:要成個range加埋,唔係淨計第一個數
+  // (以前只計probs[86],美國°F市場全部兩度一格,模型%一直被低估!)
+  const range = t.match(/(-?\d+)\s*[-–—]\s*(-?\d+)/);
+  if (range) return sum(parseInt(range[1], 10), parseInt(range[2], 10));
   return model.probs[deg] ?? 0;
 }
 

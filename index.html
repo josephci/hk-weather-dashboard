@@ -263,23 +263,36 @@
   }
   button.refresh:active { background: var(--panel-border); }
 
-  /* ---- 城市tabs ---- */
+  /* ---- 城市tabs（sticky+可橫掃,tab多都唔逼爆） ---- */
   .city-tabs {
     display: flex;
     gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding: 10px 0;
+    margin: -10px 0;
+    background: rgba(11,18,32,0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  .city-tabs::-webkit-scrollbar { display: none; }
   .city-tab {
-    flex: 1;
+    flex: 1 0 auto;
     background: var(--panel);
     border: 1px solid var(--panel-border);
     color: var(--muted);
     font-family: var(--sans);
     font-size: 13px;
     font-weight: 600;
-    padding: 10px 0;
+    padding: 10px 14px;
     border-radius: 12px;
     cursor: pointer;
     text-align: center;
+    white-space: nowrap;
   }
   .city-tab.active {
     color: var(--bg);
@@ -328,6 +341,7 @@
     <button class="city-tab" data-city="shanghai">上海</button>
     <button class="city-tab" data-city="beijing">北京</button>
     <button class="city-tab" data-city="london">倫敦</button>
+    <button class="city-tab" data-city="trend">🌍 熱門</button>
   </div>
 
   <div id="view-hk" style="display:contents;">
@@ -450,6 +464,9 @@
         <div class="stat"><div class="k" id="cnSpread">--°</div><div class="v">分歧</div></div>
       </div>
       <div id="cnForecastList"></div>
+      <div class="station-line" style="margin-top:10px;">
+        <span style="font-size:11px;color:var(--muted);">「未校正」= 呢個城市未有實測bias紀錄（得香港有26日校正數據），已用std×1.4放大補償，edge要打七折看待</span>
+      </div>
     </section>
 
     <section class="ladder-panel" style="margin-top:16px;">
@@ -459,9 +476,25 @@
     </section>
   </div><!-- /view-cn -->
 
+  <!-- 熱門市場 view -->
+  <div id="view-trend" style="display:none;">
+    <section class="ladder-panel">
+      <div class="panel-title">
+        <span>🌍 Polymarket高流動性溫度市場</span>
+        <span class="flag" id="trendUpdated"></span>
+      </div>
+      <div class="station-line">
+        <span style="font-size:12px;color:var(--muted);">按流動性排序 · 模型口徑同Telegram掃描一致 · ✈️METAR機場係推斷,落注前對返market描述</span>
+      </div>
+    </section>
+    <div id="trendList" style="display:flex;flex-direction:column;gap:16px;margin-top:16px;">
+      <section class="ladder-panel"><div class="edge-row"><span class="edge-flat">載入中…</span></div></section>
+    </div>
+  </div><!-- /view-trend -->
+
   <footer>
     <button class="refresh" id="refreshBtn">手動重新整理</button>
-    <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo</div>
+    <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo · <span id="lastUpdated"></span></div>
   </footer>
 
 </div>
@@ -575,6 +608,8 @@ async function pollLive() {
 
     lastRecordTime = json.live.recordTime;
     document.getElementById('liveDot').classList.remove('stale');
+    document.getElementById('lastUpdated').textContent =
+      '更新 ' + new Date().toLocaleTimeString('zh-HK', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
     currentRealized = Number(value); // 俾軌跡上限用
     updateGaugeNeedle(Number(value));
@@ -939,6 +974,9 @@ function bucketProbFromMap(label, probs) {
   const sum = (a,b) => { let s=0; for (let k=a;k<=b;k++) s += probs[k]||0; return s; };
   if (t.includes('higher') || t.includes('above')) return sum(deg, hi);
   if (t.includes('below') || t.includes('lower')) return sum(lo, deg);
+  // 「86-87°F」兩度一格:要成個range加埋(美國市場全部係咁)
+  const range = t.match(/(-?\d+)\s*[-–—]\s*(-?\d+)/);
+  if (range) return sum(parseInt(range[1], 10), parseInt(range[2], 10));
   return probs[deg] ?? 0;
 }
 
@@ -1153,6 +1191,160 @@ function renderMetarTrend(changes, totalReports, city) {
 }
 
 // ============================================================
+// 🌍 熱門市場tab：高流動性溫度市場+METAR讀數+模型edge
+// 口徑同scan_cities.js一致:std下限0.5(°F係0.9),無bias城市×1.4
+// ============================================================
+// 城市座標跟scan_cities.js;icao係「最可能嘅結算機場」推斷,未逐隻market驗證
+const TREND_CITIES = {
+  "hong kong":    { lat: 22.302,  lon: 114.174,  tz: "Asia/Hong_Kong",      icao: "VHHH", hasBias: true },
+  "new york":     { lat: 40.7789, lon: -73.9692, tz: "America/New_York",    icao: "KLGA" },
+  "nyc":          { lat: 40.7789, lon: -73.9692, tz: "America/New_York",    icao: "KLGA" },
+  "london":       { lat: 51.4787, lon: -0.4497,  tz: "Europe/London",       icao: "EGLL" },
+  "paris":        { lat: 48.8566, lon: 2.3522,   tz: "Europe/Paris",        icao: "LFPG" },
+  "seoul":        { lat: 37.5665, lon: 126.978,  tz: "Asia/Seoul",          icao: "RKSI" },
+  "tokyo":        { lat: 35.6762, lon: 139.6503, tz: "Asia/Tokyo",          icao: "RJTT" },
+  "los angeles":  { lat: 34.0522, lon: -118.2437,tz: "America/Los_Angeles", icao: "KLAX" },
+  "chicago":      { lat: 41.9803, lon: -87.9090, tz: "America/Chicago",     icao: "KORD" },
+  "miami":        { lat: 25.7617, lon: -80.1918, tz: "America/New_York",    icao: "KMIA" },
+  "atlanta":      { lat: 33.6407, lon: -84.4277, tz: "America/New_York",    icao: "KATL" },
+  "dallas":       { lat: 32.8998, lon: -97.0403, tz: "America/Chicago",     icao: "KDFW" },
+  "philadelphia": { lat: 39.9526, lon: -75.1652, tz: "America/New_York",    icao: "KPHL" },
+  "toronto":      { lat: 43.6532, lon: -79.3832, tz: "America/Toronto",     icao: "CYYZ" },
+  "singapore":    { lat: 1.3521,  lon: 103.8198, tz: "Asia/Singapore",      icao: "WSSS" },
+  "sydney":       { lat: -33.8688,lon: 151.2093, tz: "Australia/Sydney",    icao: "YSSY" },
+  "beijing":      { lat: 40.080,  lon: 116.585,  tz: "Asia/Shanghai",       icao: "ZBAA" },
+  "shanghai":     { lat: 31.143,  lon: 121.805,  tz: "Asia/Shanghai",       icao: "ZSPD" },
+};
+
+function trendCityCfg(raw) {
+  const key = Object.keys(TREND_CITIES).find(k => raw.includes(k) || k.includes(raw));
+  return key ? { key, ...TREND_CITIES[key] } : null;
+}
+
+// 外部API文字入innerHTML前escape
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function trendModelProbs(cfg, unit) {
+  const date = cityLocalDate(cfg.tz);
+  const unitParam = unit === 'F' ? '&temperature_unit=fahrenheit' : '';
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${cfg.lat}&longitude=${cfg.lon}` +
+    `&daily=temperature_2m_max&timezone=${encodeURIComponent(cfg.tz)}&models=${MODELS.join(',')}` +
+    `&start_date=${date}&end_date=${date}${unitParam}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Open-Meteo ' + res.status);
+  const data = await res.json();
+
+  const bias = cfg.hasBias ? ((await getBias())['max'] || {}) : {};
+  const values = [];
+  for (const m of MODELS) {
+    const arr = data.daily?.[`temperature_2m_max_${m}`];
+    // bias係°C計,°F市場要×1.8
+    if (arr && arr[0] != null) values.push(arr[0] + (bias[m] || 0) * (unit === 'F' ? 1.8 : 1));
+  }
+  if (values.length < 2) return null;
+
+  const n = values.length;
+  const mean = values.reduce((a,b)=>a+b,0)/n;
+  let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
+  std = Math.max(std, unit === 'F' ? 0.9 : 0.5);
+  if (!cfg.hasBias) std *= 1.4;
+
+  const lo = Math.floor(mean - 6*std) - 2, hi = Math.ceil(mean + 6*std) + 2;
+  const probs = {};
+  for (let b = lo; b <= hi; b++) probs[b] = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+  return { probs, mean, std };
+}
+
+async function pollTrending() {
+  if (currentCity !== 'trend') return;
+  const listEl = document.getElementById('trendList');
+  try {
+    const res = await fetch(`${PM_ENDPOINT}?mode=trending`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('function ' + res.status);
+    const { markets } = await res.json();
+    if (!Array.isArray(markets) || !markets.length) {
+      listEl.innerHTML = '<section class="ladder-panel"><div class="edge-row"><span class="edge-flat">而家冇open嘅溫度市場</span></div></section>';
+      return;
+    }
+
+    const top = markets.slice(0, 6).map(mkt => ({ ...mkt, cfg: trendCityCfg(mkt.city) }));
+
+    // 一個request攞晒識嘅城市嘅METAR
+    const icaos = [...new Set(top.filter(t => t.cfg).map(t => t.cfg.icao))];
+    let metars = {};
+    if (icaos.length) {
+      try {
+        const mRes = await fetch(`${TEMP_ENDPOINT}?ids=${icaos.join(',')}`, { cache: 'no-store' });
+        if (mRes.ok) metars = (await mRes.json()).metars || {};
+      } catch { /* METAR攞唔到照顯示market */ }
+    }
+
+    // 並行計各城市模型機率(Open-Meteo免費,唔嘥Netlify credit)
+    const models = await Promise.all(
+      top.map(t => t.cfg ? trendModelProbs(t.cfg, t.unit).catch(() => null) : Promise.resolve(null))
+    );
+
+    listEl.innerHTML = '';
+    top.forEach((t, i) => {
+      const model = models[i];
+      const metar = t.cfg ? metars[t.cfg.icao] : null;
+      const fmtMoney = (v) => v >= 1000 ? `$${(v/1000).toFixed(0)}k` : `$${Math.round(v)}`;
+      let metarStr = '--';
+      if (metar) {
+        metarStr = t.unit === 'F'
+          ? `${Math.round(metar.tempC * 9/5 + 32)}°F`
+          : `${Number.isInteger(metar.tempC) ? metar.tempC : metar.tempC.toFixed(1)}°C`;
+      }
+
+      let rows = '';
+      let shownRows = 0;
+      for (const b of t.buckets) {
+        if (b.yesPrice < 2 && shownRows > 0) continue; // 死tail唔顯示
+        if (shownRows >= 8) break;
+        let edgeHtml = '<span class="edge-val edge-flat">--</span>';
+        if (model) {
+          const mp = bucketProbFromMap(b.label, model.probs);
+          if (mp !== null) {
+            const modelPct = Math.round(mp * 100);
+            const edge = modelPct - b.yesPrice;
+            const cls = Math.abs(edge) < 8 ? 'edge-flat' : (edge > 0 ? 'edge-pos' : 'edge-neg');
+            edgeHtml = `<span class="edge-val ${cls}">${edge > 0 ? '+' : ''}${edge}%</span>`;
+          }
+        }
+        rows += `<div class="edge-row"><span class="edge-label">${esc(b.label)}</span>` +
+          `<span class="edge-nums">${model ? '模' + Math.round((bucketProbFromMap(b.label, model.probs) ?? 0) * 100) + '% / ' : ''}市${b.yesPrice}¢</span>` +
+          edgeHtml + `</div>`;
+        shownRows++;
+      }
+
+      const card = document.createElement('section');
+      card.className = 'ladder-panel';
+      card.innerHTML = `
+        <div class="panel-title">
+          <span>#${i+1} ${esc(t.city.toUpperCase())}</span>
+          <span class="flag">${t.cfg?.hasBias ? '✓已校正' : '⚠未校正'}</span>
+        </div>
+        <div class="station-line" style="margin-bottom:8px;">
+          <span>✈️ ${t.cfg ? esc(t.cfg.icao) + '：' : ''}<span style="font-family:var(--mono);color:var(--text);">${t.cfg ? metarStr : '未識別城市'}</span>${metar?.obsTime ? ` <span style="font-size:11px;color:var(--muted);">${formatRelativeTime(metar.obsTime)}</span>` : ''}</span>
+          <span style="font-size:12px;color:var(--muted);">${model ? `模型${model.mean.toFixed(1)}°${t.unit} σ${model.std.toFixed(1)}` : ''}</span>
+        </div>
+        ${rows || '<div class="edge-row"><span class="edge-flat">冇bucket數據</span></div>'}
+        <div class="station-line" style="margin-top:10px;">
+          <span style="font-size:12px;color:var(--muted);">流動性 ${fmtMoney(t.liquidity)} · 24hr量 ${fmtMoney(t.volume24hr)}</span>
+          <a class="market-link" href="${esc(t.url)}" target="_blank" rel="noopener">開market ↗</a>
+        </div>`;
+      listEl.appendChild(card);
+    });
+    document.getElementById('trendUpdated').textContent =
+      '更新 ' + new Date().toLocaleTimeString('zh-HK', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  } catch (e) {
+    listEl.innerHTML = `<section class="ladder-panel"><div class="edge-row"><span class="edge-flat">攞唔到: ${esc(e.message)}</span></div></section>`;
+  }
+}
+
+// ============================================================
 // 未來1小時預測（趨勢+降雨+模型三合一）
 // ============================================================
 let omHourly = null;   // Open-Meteo下一個整點溫度(6模型平均)
@@ -1245,10 +1437,11 @@ document.querySelectorAll('.city-tab').forEach(tab => {
     document.querySelectorAll('.city-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     currentCity = tab.dataset.city;
-    const isHk = currentCity === 'hk';
-    document.getElementById('view-hk').style.display = isHk ? 'contents' : 'none';
-    document.getElementById('view-cn').style.display = isHk ? 'none' : 'block';
-    if (!isHk) pollCnCity();
+    document.getElementById('view-hk').style.display = currentCity === 'hk' ? 'contents' : 'none';
+    document.getElementById('view-cn').style.display = REMOTE_CITIES[currentCity] ? 'block' : 'none';
+    document.getElementById('view-trend').style.display = currentCity === 'trend' ? 'block' : 'none';
+    if (REMOTE_CITIES[currentCity]) pollCnCity();
+    if (currentCity === 'trend') pollTrending();
   });
 });
 
@@ -1262,7 +1455,8 @@ setInterval(tickClock, 1000); tickClock();
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
   pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk();
-  if (currentCity !== 'hk') pollCnCity();
+  if (REMOTE_CITIES[currentCity]) pollCnCity();
+  if (currentCity === 'trend') pollTrending();
 });
 
 // 背景tab唔poll:收埋嘅tab照poll係浪費function credit,
@@ -1284,12 +1478,14 @@ setInterval(whenVisible(pollEdgeHk), 2 * 60_000);
 fetchOmHourly();
 setInterval(whenVisible(fetchOmHourly), 15 * 60_000);
 setInterval(whenVisible(pollHourNowcast), 60_000);
-setInterval(whenVisible(() => { if (currentCity !== 'hk') pollCnCity(); }), 5 * 60_000);
+setInterval(whenVisible(() => { if (REMOTE_CITIES[currentCity]) pollCnCity(); }), 5 * 60_000);
+setInterval(whenVisible(pollTrending), 5 * 60_000); // 自己內部check係咪trend tab
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     pollLive(); pollEdgeHk();
-    if (currentCity !== 'hk') pollCnCity();
+    if (REMOTE_CITIES[currentCity]) pollCnCity();
+    if (currentCity === 'trend') pollTrending();
   }
 });
 </script>

@@ -351,6 +351,18 @@
   </section>
 
   <section class="gauge-panel">
+    <div class="panel-title"><span>🔮 未來1小時（趨勢+降雨+模型合成）</span></div>
+    <div class="stats-row" style="margin-top:0;padding-top:0;border-top:none;">
+      <div class="stat"><div class="k" id="nc1Temp">--°</div><div class="v">預測溫度</div></div>
+      <div class="stat"><div class="k" id="nc1Trend">--</div><div class="v">現時趨勢</div></div>
+      <div class="stat"><div class="k" id="nc1Rain">--</div><div class="v">過去1hr雨</div></div>
+    </div>
+    <div class="station-line" style="margin-top:12px;">
+      <span id="nc1Verdict" style="font-size:13px;">計算中…</span>
+    </div>
+  </section>
+
+  <section class="gauge-panel">
     <div class="panel-title">
       <span>今日高溫 · 模型共識</span>
       <span class="flag" id="spreadFlag"></span>
@@ -530,10 +542,15 @@ async function pollLive() {
       lastMetars = json.metars;
       if (currentCity !== 'hk') renderCnLive();
     }
+    if (json.rain) {
+      rainNow = json.rain;
+      pollHourNowcast(); // 有新雨量數據就重算1小時預測
+    }
 
     lastRecordTime = json.live.recordTime;
     document.getElementById('liveDot').classList.remove('stale');
 
+    currentRealized = Number(value); // 俾軌跡上限用
     updateGaugeNeedle(Number(value));
     clearError();
   } catch (e) {
@@ -556,6 +573,24 @@ function formatRelativeTime(iso) {
 // ============================================================
 let forecastState = null;
 let todayMaxRealized = null; // 今日已實現嘅最高溫（由pollLive更新）
+let currentRealized = null;  // 現時溫度（由pollLive更新,軌跡上限用）
+let rainNow = null;          // 過去1小時降雨（由pollLive更新）
+let trendPts = [];           // 今日採樣點（由pollTrend更新,俾1小時預測用）
+
+// 剩餘升溫潛力(°C):由而家去到今日高峰(通常14-15時)最多仲可以升幾多
+// 用香港夏天晴天嘅典型升溫速率做上限——落雨日實際會更低,呢個係保守上限
+function risePotential(h) {
+  if (h < 9) return 6.0;
+  if (h < 10) return 5.0;
+  if (h < 11) return 4.5;
+  if (h < 12) return 3.5;
+  if (h < 13) return 2.5;
+  if (h < 14) return 1.6;
+  if (h < 15) return 0.9;
+  if (h < 16) return 0.4;
+  if (h < 17) return 0.2;
+  return 0;
+}
 
 async function pollForecast() {
   try {
@@ -717,11 +752,21 @@ function computeBuckets() {
     buckets.push({ range: `${b}–${b+1}°`, low: b, prob: p });
   }
 
+  // 軌跡上限：最終max唔可能超過「現時溫度+剩餘時間最大合理升幅」
+  // 例:10:30現時25.8° → 上限~30.3° → 31/32bucket砍到近零
+  let capped = false;
+  if (conditioned && currentRealized !== null) {
+    const cap = Math.max(currentRealized + risePotential(h), rm); // 唔可以低過已實現max
+    for (const b of buckets) {
+      if (b.low > Math.floor(cap)) { b.prob *= 0.03; capped = true; } // 超上限嘅格留3%殘餘(唔敢講死)
+    }
+  }
+
   // 條件化之後重新歸一（令總和=100%）
   const total = buckets.reduce((a,b)=>a+b.prob,0);
   if (total > 0) buckets.forEach(b => b.prob = b.prob/total);
 
-  return { buckets, conditioned };
+  return { buckets, conditioned, capped };
 }
 
 function renderForecast() {
@@ -744,7 +789,7 @@ function renderForecast() {
   const titleEl = document.querySelector('.ladder-panel .panel-title');
   if (titleEl) {
     titleEl.textContent = conditioned
-      ? `今日高溫機率（已結合實測高溫 ${todayMaxRealized.toFixed(1)}°）`
+      ? `今日高溫機率（實測${todayMaxRealized.toFixed(1)}°+軌跡上限修正）`
       : '今日高溫機率（6模型）';
   }
 
@@ -788,13 +833,25 @@ async function pollTrend() {
     // 香港「今日」日期
     const today = new Date(Date.now() + 8*3600*1000).toISOString().slice(0, 10);
     const pts = [];
+    let officialMax = null; // 由todayMax欄攞真正官方今日最高(唔會俾採樣疏漏走)
     for (const line of lines) {
-      const [recordTime, current] = line.split(',');
-      if (recordTime.startsWith(today) && current) {
-        const mins = parseInt(recordTime.slice(11,13),10)*60 + parseInt(recordTime.slice(14,16),10);
-        const v = parseFloat(current);
-        if (!Number.isNaN(v)) pts.push({ mins, v });
+      const cols = line.split(',');
+      const recordTime = cols[0], current = cols[1], tMax = cols[2];
+      if (recordTime.startsWith(today)) {
+        if (current) {
+          const mins = parseInt(recordTime.slice(11,13),10)*60 + parseInt(recordTime.slice(14,16),10);
+          const v = parseFloat(current);
+          if (!Number.isNaN(v)) pts.push({ mins, v });
+        }
+        if (tMax) {
+          const mv = parseFloat(tMax);
+          if (!Number.isNaN(mv) && (officialMax === null || mv > officialMax)) officialMax = mv;
+        }
       }
+    }
+    // 用dashboard已知嘅實測max做最後保險(佢嚟自maxmin CSV,最權威)
+    if (todayMaxRealized !== null && (officialMax === null || todayMaxRealized > officialMax)) {
+      officialMax = todayMaxRealized;
     }
     const svg = document.getElementById('trendSvg');
     const note = document.getElementById('trendNote');
@@ -802,20 +859,22 @@ async function pollTrend() {
 
     const W = 360, H = 140, PAD = 24;
     const vMin = Math.min(...pts.map(p=>p.v)) - 0.5;
-    const vMax = Math.max(...pts.map(p=>p.v)) + 0.5;
+    const vMax = Math.max(officialMax ?? 0, ...pts.map(p=>p.v)) + 0.5;
     const x = (m) => PAD + (m / 1440) * (W - PAD*2);
     const y = (v) => H - PAD - ((v - vMin) / (vMax - vMin)) * (H - PAD*2);
 
     const path = pts.map((p,i)=>`${i===0?'M':'L'}${x(p.mins).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
-    const peak = pts.reduce((a,b)=>b.v>a.v?b:a);
+    const samplePeak = pts.reduce((a,b)=>b.v>a.v?b:a);
+    const maxLineV = officialMax ?? samplePeak.v;
     svg.innerHTML =
-      `<line class="trend-max-line" x1="${PAD}" y1="${y(peak.v)}" x2="${W-PAD}" y2="${y(peak.v)}"/>` +
+      `<line class="trend-max-line" x1="${PAD}" y1="${y(maxLineV)}" x2="${W-PAD}" y2="${y(maxLineV)}"/>` +
       `<path class="trend-line" d="${path}"/>` +
-      `<circle cx="${x(peak.mins)}" cy="${y(peak.v)}" r="3" fill="var(--warm)"/>` +
-      `<text class="trend-label" x="${PAD}" y="${y(peak.v)-5}">max ${peak.v.toFixed(1)}° @ ${String(Math.floor(peak.mins/60)).padStart(2,'0')}:${String(peak.mins%60).padStart(2,'0')}</text>` +
+      `<circle cx="${x(samplePeak.mins)}" cy="${y(samplePeak.v)}" r="3" fill="var(--warm)"/>` +
+      `<text class="trend-label" x="${PAD}" y="${y(maxLineV)-5}">官方max ${maxLineV.toFixed(1)}°</text>` +
       `<text class="trend-label" x="${PAD}" y="${H-6}">00:00</text>` +
       `<text class="trend-label" x="${W-PAD-30}" y="${H-6}">24:00</text>`;
-    note.textContent = `${pts.length}個讀數 · 最後 ${pts[pts.length-1].v.toFixed(1)}°`;
+    note.textContent = `${pts.length}個採樣讀數（曲線只係趨勢參考,真峰值可能落喺採樣之間）· 最後 ${pts[pts.length-1].v.toFixed(1)}°`;
+    trendPts = pts;
   } catch (e) {
     document.getElementById('trendNote').textContent = '走勢圖攞唔到：' + e.message;
   }
@@ -967,6 +1026,79 @@ async function pollCnCity() {
 }
 
 // ============================================================
+// 未來1小時預測（趨勢+降雨+模型三合一）
+// ============================================================
+let omHourly = null; // Open-Meteo未來兩小時逐小時溫度(6模型平均)
+
+async function fetchOmHourly() {
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&hourly=temperature_2m&timezone=Asia%2FHong_Kong&models=${MODELS.join(',')}` +
+      `&forecast_days=1&_=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const times = data.hourly?.time ?? [];
+    const nowHK = new Date(Date.now() + 8*3600*1000);
+    const targetHour = (nowHK.getUTCHours() + 1) % 24; // 下一個整點
+    const idx = times.findIndex(t => parseInt(t.slice(11,13),10) === targetHour);
+    if (idx < 0) return;
+    const vals = [];
+    for (const m of MODELS) {
+      const arr = data.hourly?.[`temperature_2m_${m}`];
+      if (arr && arr[idx] != null) vals.push(arr[idx]);
+    }
+    if (vals.length >= 2) omHourly = vals.reduce((a,b)=>a+b,0)/vals.length;
+  } catch { /* 靜默 */ }
+}
+
+function pollHourNowcast() {
+  const tempEl = document.getElementById('nc1Temp');
+  const trendEl = document.getElementById('nc1Trend');
+  const rainEl = document.getElementById('nc1Rain');
+  const verdictEl = document.getElementById('nc1Verdict');
+  if (currentRealized === null) { verdictEl.textContent = '等緊即時讀數…'; return; }
+
+  // 輸入1: 最近趨勢(最後3個採樣點,°/hr)
+  let slope = 0, hasTrend = false;
+  if (trendPts.length >= 3) {
+    const h3 = trendPts.slice(-3);
+    const spanHr = (h3[2].mins - h3[0].mins) / 60;
+    if (spanHr > 0) { slope = (h3[2].v - h3[0].v) / spanHr; hasTrend = true; }
+  }
+
+  // 輸入2: 降雨
+  const localRain = rainNow?.localMm ?? null;
+  const raining = localRain !== null && localRain >= 0.5;
+
+  // 輸入3: 模型下一個整點預測
+  const modelNext = omHourly;
+
+  // 合成: 趨勢外推(阻尼0.6)同模型各佔一半;落緊雨就封頂(雨中極少升超過+0.3°/hr)
+  const trendProj = currentRealized + slope * 0.6;
+  let proj = modelNext !== null ? (trendProj + modelNext) / 2 : trendProj;
+  if (raining) proj = Math.min(proj, currentRealized + 0.3);
+
+  tempEl.textContent = proj.toFixed(1) + '°';
+  trendEl.textContent = (slope >= 0 ? '+' : '') + slope.toFixed(1) + '°/hr';
+  rainEl.textContent = localRain === null ? '--' : localRain.toFixed(1) + 'mm';
+
+  // 結論: 破今日max機率
+  let verdict;
+  if (todayMaxRealized === null) {
+    verdict = '未有今日max數據';
+  } else {
+    const gapToMax = todayMaxRealized - proj;
+    const h = hkHour();
+    if (h >= 16) verdict = `今日高溫大概率已鎖定(${todayMaxRealized.toFixed(1)}°)`;
+    else if (raining) verdict = `🌧 落緊雨(${localRain.toFixed(1)}mm/hr),升溫受壓 → 未來1小時破今日max(${todayMaxRealized.toFixed(1)}°)機率:低`;
+    else if (proj > todayMaxRealized) verdict = `📈 預測${proj.toFixed(1)}°高過今日max(${todayMaxRealized.toFixed(1)}°) → 未來1小時破max機率:偏高,留意逼近訊號`;
+    else if (gapToMax <= 0.5 && slope > 0.3) verdict = `預測貼近今日max(差${gapToMax.toFixed(1)}°)兼升緊 → 破max機率:中`;
+    else verdict = `預測${proj.toFixed(1)}°,距今日max ${gapToMax.toFixed(1)}° → 破max機率:低`;
+  }
+  verdictEl.textContent = verdict + (hasTrend ? '' : '（趨勢數據不足,參考性打折）');
+}
+
+// ============================================================
 // 城市tabs
 // ============================================================
 document.querySelectorAll('.city-tab').forEach(tab => {
@@ -1004,6 +1136,9 @@ setInterval(pollForecast, FORECAST_POLL_MS);
 setInterval(pollTomorrow, FORECAST_POLL_MS);
 setInterval(pollTrend, 5 * 60_000);
 setInterval(pollEdgeHk, 2 * 60_000);
+fetchOmHourly();
+setInterval(fetchOmHourly, 15 * 60_000);
+setInterval(pollHourNowcast, 60_000);
 setInterval(() => { if (currentCity !== 'hk') pollCnCity(); }, 5 * 60_000);
 
 document.addEventListener('visibilitychange', () => {

@@ -40,6 +40,9 @@ Polymarket Gamma API     ┘   temperature/polymarket     (4城市tabs)
 - rhrread整點讀數~04分出,1min CSV~08分先出 → 雙水喉設計嘅由來
 - 6模型系統性低估HK總部1-2°C(熱島),bias.json自動校正緊
 - 颱風/雷暴日模型可以錯5σ(2026-07-05實例:預測30.5°實開33°) → 警告日std×1.8
+- 落雨日反向版:實測落緊雨(rhrread)+模型高峰時段(12-16)預測雨 → 今日高溫
+  階梯將分佈移低0.4-1.5°+std×1.3。注意:均勻砍upside bucket再歸一係no-op
+  (比例唔變),一定要移mean先有真效果
 - 上海北京market結算源=機場METAR整數,冇小數呢回事
 - Wunderground嘅x.1°係°F換算殘影,唔係真精度
 - 倫敦tab跟scan_cities.js嘅convention用Heathrow(EGLL);Polymarket London market嘅

@@ -78,8 +78,24 @@ async function fetchMetar() {
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// 過去一小時降雨(rhrread):攞油尖旺(天文台總部所在區)+全港最大值
+async function fetchRain() {
+  const res = await fetch("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc");
+  if (!res.ok) throw new Error(`rhrread ${res.status}`);
+  const json = await res.json();
+  const data = json.rainfall?.data;
+  if (!Array.isArray(data)) return null;
+  let local = null, maxMm = 0, maxDistrict = null;
+  for (const d of data) {
+    const mm = typeof d.max === "number" ? d.max : 0;
+    if (d.place === "油尖旺") local = mm;
+    if (mm > maxMm) { maxMm = mm; maxDistrict = d.place; }
+  }
+  return { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
+}
+
 exports.handler = async function () {
-  const [liveResult, maxMinResult, metarResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar()]);
+  const [liveResult, maxMinResult, metarResult, rainResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar(), fetchRain()]);
 
   const response = {};
 
@@ -99,6 +115,10 @@ exports.handler = async function () {
   if (metarResult.status === "fulfilled" && metarResult.value) {
     response.metars = metarResult.value; // { VHHH: {tempC,obsTime}, ZSPD: {...}, ZBAA: {...} }
     response.metar = metarResult.value.VHHH || null; // 向後兼容舊前端
+  }
+
+  if (rainResult.status === "fulfilled" && rainResult.value) {
+    response.rain = rainResult.value; // { localMm, maxMm, maxDistrict, endTime }
   }
 
   return {

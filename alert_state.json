@@ -1,11 +1,11 @@
 {
   "date": "2026-07-17",
-  "prevCurrent": 26.2,
+  "prevCurrent": 26.4,
   "prevMax": 26.8,
   "alertedFloors": [],
-  "approachAlerted": null,
+  "approachAlerted": 27,
   "pulledBackAlerted": false,
-  "lastWarnCodes": "WRAIN,WTS",
+  "lastWarnCodes": "WTS",
   "edgeAlerted": {},
   "fastAlerted": [
     27

@@ -63,6 +63,11 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 - 🔒鎖定策略:「N or higher」bucket一旦當日METAR max實現>=N,結果已確定,
   90-95¢買YES食5-10%係無模型風險嘅(剩返結算源對錯+METAR修正風險);
   「半鎖」(單度bucket,floor(max)啱好喺格內)仲有升穿風險,夜晚先算實
+- ⚠️倫敦market係°F開盤!模型機率/edge/鎖定判斷全部要跟market單位計,
+  pollCnCity會由bucket label自動偵測°F並轉晒成套(°C對照另外顯示);
+  0¢/100¢係凌晨未有流動性嘅假價,顯示「市未開價」+鎖定判斷剔除(3-97¢先有效)
+- polymarket function有slug fallback:直接命中唔到就掃weather tag用title配對
+  (應對巴黎等slug格式唔同嘅城市)
 
 ## Secrets清單
 

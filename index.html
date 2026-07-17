@@ -983,21 +983,39 @@ function bucketProbFromMap(label, probs) {
   return probs[deg] ?? 0;
 }
 
-function renderEdgeList(elId, buckets, probs) {
+function renderEdgeList(elId, buckets, probs, unit = 'C') {
   const el = document.getElementById(elId);
   el.innerHTML = '';
   for (const b of buckets) {
     const mp = bucketProbFromMap(b.label, probs);
     if (mp === null) continue;
     const modelPct = Math.round(mp * 100);
-    const edge = modelPct - b.yesPrice;
-    const cls = Math.abs(edge) < 8 ? 'edge-flat' : (edge > 0 ? 'edge-pos' : 'edge-neg');
+
+    // °F label加°C提示,方便對照
+    let labelHtml = esc(b.label);
+    if (unit === 'F') {
+      const range = b.label.match(/(-?\d+)\s*[-–—]\s*(-?\d+)/);
+      const single = b.label.match(/(-?\d+)/);
+      if (range) labelHtml += `<br><span style="font-size:11px;color:var(--muted);font-weight:400;">${fToC(+range[1])}-${fToC(+range[2])}°C</span>`;
+      else if (single) labelHtml += `<br><span style="font-size:11px;color:var(--muted);font-weight:400;">≈${fToC(+single[1])}°C</span>`;
+    }
+
     const row = document.createElement('div');
     row.className = 'edge-row';
-    row.innerHTML =
-      `<span class="edge-label">${b.label}</span>` +
-      `<span class="edge-nums">模${modelPct}% / 市${b.yesPrice}¢</span>` +
-      `<span class="edge-val ${cls}">${edge > 0 ? '+' : ''}${edge}%</span>`;
+    // 0¢/100¢=未有流動性嘅假價(凌晨市場常見),唔好計edge嘈住你
+    if (b.yesPrice <= 0 || b.yesPrice >= 100) {
+      row.innerHTML =
+        `<span class="edge-label">${labelHtml}</span>` +
+        `<span class="edge-nums">模${modelPct}% / 市未開價</span>` +
+        `<span class="edge-val edge-flat">--</span>`;
+    } else {
+      const edge = modelPct - b.yesPrice;
+      const cls = Math.abs(edge) < 8 ? 'edge-flat' : (edge > 0 ? 'edge-pos' : 'edge-neg');
+      row.innerHTML =
+        `<span class="edge-label">${labelHtml}</span>` +
+        `<span class="edge-nums">模${modelPct}% / 市${b.yesPrice}¢</span>` +
+        `<span class="edge-val ${cls}">${edge > 0 ? '+' : ''}${edge}%</span>`;
+    }
     el.appendChild(row);
   }
   if (!el.children.length) el.innerHTML = '<div class="edge-row"><span class="edge-flat">冇可比較嘅bucket</span></div>';
@@ -1052,12 +1070,23 @@ async function pollCnCity() {
   renderCnLive();
   pollMetarTrend();
   try {
+    // 先攞market判斷單位——倫敦market係°F開盤!模型機率一定要跟market單位計,
+    // 唔係就會出現「75°F or below=100%」嘅廢數
+    let pm = null;
+    try {
+      const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}`, { cache: 'no-store' });
+      if (pmRes.ok) pm = await pmRes.json();
+    } catch { /* market攞唔到照出模型預測 */ }
+    const unit = (pm?.found && pm.buckets.some(b => /°f|fahrenheit/i.test(b.label))) ? 'F' : 'C';
+    cnMarketUnit = unit;
+
     // 6模型今日預測:有per-city bias(daily_log儲夠7日)就用,冇就std×1.4補償
     // 「今日」同Open-Meteo時區都用城市當地時區（倫敦同HK差成7-8個鐘）
     const today = cityLocalDate(city.tz);
+    const unitParam = unit === 'F' ? '&temperature_unit=fahrenheit' : '';
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
       `&daily=temperature_2m_max&timezone=${encodeURIComponent(city.tz)}&models=${MODELS.join(',')}` +
-      `&start_date=${today}&end_date=${today}&_=${Date.now()}`;
+      `&start_date=${today}&end_date=${today}${unitParam}&_=${Date.now()}`;
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error('Open-Meteo ' + res.status);
     const data = await res.json();
@@ -1068,7 +1097,8 @@ async function pollCnCity() {
     const values = [];
     for (const mo of MODELS) {
       const arr = data.daily?.[`temperature_2m_max_${mo}`];
-      if (arr && arr[0] != null) values.push(arr[0] + (cityBias ? (cityBias[mo] || 0) : 0));
+      // bias係°C計,°F市場要×1.8
+      if (arr && arr[0] != null) values.push(arr[0] + (cityBias ? (cityBias[mo] || 0) * (unit === 'F' ? 1.8 : 1) : 0));
     }
     if (values.length < 2) throw new Error('模型數據不足');
 
@@ -1076,14 +1106,15 @@ async function pollCnCity() {
     const mean = values.reduce((a,b)=>a+b,0)/n;
     let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
     const spread = Math.max(...values) - Math.min(...values);
-    std = Math.max(std, 0.5);
+    std = Math.max(std, unit === 'F' ? 0.9 : 0.5);
     if (!cityBias) std *= 1.4; // 無bias校正,放大補償
 
     document.getElementById('cnMean').textContent = mean.toFixed(1)+'°';
     document.getElementById('cnStd').textContent = std.toFixed(1)+'°';
     document.getElementById('cnSpread').textContent = spread.toFixed(1)+'°';
     document.getElementById('cnTomorrowTitle').textContent =
-      `今日高溫預測 · ${n}模型（${cityBias ? `✓已校正${cb.sampleDays}日` : '未校正'}）` + (spread >= 1.5 ? ' ⚠分歧較大' : '');
+      `今日高溫預測 · ${n}模型（${cityBias ? `✓已校正${cb.sampleDays}日` : '未校正'}${unit === 'F' ? ' · °F市場' : ''}）` +
+      (spread >= (unit === 'F' ? 2.7 : 1.5) ? ' ⚠分歧較大' : '');
     document.getElementById('cnBiasNote').textContent = cityBias
       ? `已用${cb.sampleDays}日「模型vs METAR實測」紀錄做bias校正(daily_log自動累積,越多日越準)`
       : `「未校正」= 呢個城市bias紀錄未夠7日(daily_log累積緊),已用std×1.4放大補償,edge要打七折看待`;
@@ -1103,18 +1134,16 @@ async function pollCnCity() {
       const item = document.createElement('div');
       item.className = 'ladder-item';
       item.innerHTML =
-        `<span class="ladder-range">${b.low}°C</span>` +
+        `<span class="ladder-range">${b.low}°${unit}${unit === 'F' ? `<span style="font-size:11px;color:var(--muted);"> ${fToC(b.low)}°C</span>` : ''}</span>` +
         `<div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>` +
         `<span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>`;
       listEl.appendChild(item);
     });
     cnModelProbs = probs;
 
-    // Edge
-    const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}`, { cache: 'no-store' });
-    const pm = await pmRes.json();
-    if (pm.found) {
-      renderEdgeList('edgeListCn', pm.buckets, probs);
+    // Edge + 鎖定
+    if (pm?.found) {
+      renderEdgeList('edgeListCn', pm.buckets, probs, unit);
       const link = document.getElementById('marketLinkCn');
       link.href = pm.url; link.textContent = '👉 ' + pm.title;
       cnPmBuckets = pm.buckets;
@@ -1122,11 +1151,14 @@ async function pollCnCity() {
       document.getElementById('edgeListCn').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>';
       cnPmBuckets = null;
     }
-    renderLocks('lockListCn', cnPmBuckets, metarTodayMax);
+    renderLocksCn();
   } catch (e) {
     document.getElementById('edgeListCn').innerHTML = `<div class="edge-row"><span class="edge-flat">攞唔到: ${e.message}</span></div>`;
   }
 }
+
+// °F轉°C(顯示提示用,一位小數)
+function fToC(f) { return Math.round((f - 32) * 5 / 9 * 10) / 10; }
 
 // ============================================================
 // METAR讀數趨勢（結算源逐次讀數，有變化先記一點）
@@ -1207,7 +1239,7 @@ function renderMetarTrend(changes, totalReports, city) {
 
   // METAR已實現max就係鎖定判斷嘅事實基礎
   metarTodayMax = maxV;
-  renderLocks('lockListCn', cnPmBuckets, metarTodayMax);
+  renderLocksCn();
 }
 
 // ============================================================
@@ -1223,7 +1255,15 @@ function esc(s) {
 
 let hkPmBuckets = null;   // pollEdgeHk儲低
 let cnPmBuckets = null;   // pollCnCity儲低
-let metarTodayMax = null; // pollMetarTrend儲低(當前城市METAR已實現max)
+let metarTodayMax = null; // pollMetarTrend儲低(當前城市METAR已實現max,永遠°C)
+let cnMarketUnit = 'C';   // 當前城市market單位(倫敦係°F!),pollCnCity判斷
+
+// 遠程城市鎖定判斷:realized max要轉做market單位先比較得
+function renderLocksCn() {
+  const rm = metarTodayMax === null ? null
+    : (cnMarketUnit === 'F' ? Math.round((metarTodayMax * 9/5 + 32) * 10) / 10 : metarTodayMax);
+  renderLocks('lockListCn', cnPmBuckets, rm);
+}
 
 function computeLocks(buckets, realizedMax) {
   const locks = [];
@@ -1236,24 +1276,28 @@ function computeLocks(buckets, realizedMax) {
     const range = t.match(/(-?\d+)\s*[-–—]\s*(-?\d+)/);
     const hiDeg = range ? parseInt(range[2], 10) : deg;
 
+    // 0¢/100¢=未有流動性嘅假價,3-97¢先當有效報價(兩邊都要買到先算機會)
+    const quoted = b.yesPrice >= 3 && b.yesPrice <= 97;
+    if (!quoted) continue;
+
     if (t.includes('higher') || t.includes('above')) {
       // 已實現max>=N → YES結果已確定
-      if (realizedMax >= deg && b.yesPrice <= 97) {
+      if (realizedMax >= deg) {
         locks.push({ label: b.label, side: 'YES', cost: b.yesPrice,
           profit: (100 - b.yesPrice) / b.yesPrice * 100, sure: true });
       }
     } else if (t.includes('below') || t.includes('lower')) {
       // 已實現max升穿咗上限 → NO結果已確定
-      if (fb > hiDeg && b.yesPrice >= 3) {
+      if (fb > hiDeg) {
         locks.push({ label: b.label, side: 'NO', cost: 100 - b.yesPrice,
           profit: b.yesPrice / (100 - b.yesPrice) * 100, sure: true });
       }
     } else {
       // 單度/range bucket
-      if (fb > hiDeg && b.yesPrice >= 3) {
+      if (fb > hiDeg) {
         locks.push({ label: b.label, side: 'NO', cost: 100 - b.yesPrice,
           profit: b.yesPrice / (100 - b.yesPrice) * 100, sure: true });
-      } else if (fb >= deg && fb <= hiDeg && b.yesPrice <= 97) {
+      } else if (fb >= deg && fb <= hiDeg) {
         // 而家贏緊,但再升穿就輸——「半鎖」,夜晚先接近實鎖
         locks.push({ label: b.label, side: 'YES', cost: b.yesPrice,
           profit: (100 - b.yesPrice) / b.yesPrice * 100, sure: false });
@@ -1389,6 +1433,7 @@ document.querySelectorAll('.city-tab').forEach(tab => {
       // 轉城市要清舊城市嘅數據,唔好俾上一個城市嘅METAR max影響鎖定判斷
       metarTodayMax = null;
       cnPmBuckets = null;
+      cnMarketUnit = 'C';
       renderLocks('lockListCn', null, null);
       pollCnCity();
     }

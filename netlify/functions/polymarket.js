@@ -53,7 +53,20 @@ exports.handler = async function (event) {
       return { statusCode: 502, body: JSON.stringify({ error: `Gamma API ${res.status}` }) };
     }
     const events = await res.json();
-    const target = Array.isArray(events) ? events[0] : null;
+    let target = Array.isArray(events) ? events[0] : null;
+
+    // slug直接命中唔到(有啲城市slug格式可能唔同)→
+    // fallback:掃weather tag,靠title「Highest temperature in {city} on {month} {d}」配對
+    if (!target) {
+      const res2 = await fetch("https://gamma-api.polymarket.com/events?closed=false&limit=200&tag_slug=weather");
+      if (res2.ok) {
+        const all = await res2.json();
+        const cityName = city.replace(/-/g, " ");
+        const titleRe = new RegExp(`highest temperature in ${cityName} on ${MONTHS[m - 1]} ${d}\\b`, "i");
+        target = (Array.isArray(all) ? all : []).find((ev) => titleRe.test(ev.title || "")) || null;
+      }
+    }
+
     // CDN cache 60秒(下面found:true同樣):市價喺dashboard本身都係2分鐘先refresh,
     // 全部tab/device共用一次invocation,慳Netlify credit
     const CACHE_HEADERS = {

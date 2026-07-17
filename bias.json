@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-07-17T00:12:59.302Z",
-  "sampleDays": 26,
+  "generatedAt": "2026-07-17T16:45:55.476Z",
+  "sampleDays": 27,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。",
   "max": {
     "gfs_seamless": 1.38,

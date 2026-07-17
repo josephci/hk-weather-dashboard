@@ -32,8 +32,8 @@ const CITIES = {
   "hong kong":     { lat: 22.302,  lon: 114.174,  tz: "Asia/Hong_Kong",     hasBias: true },
   "new york":      { lat: 40.7789, lon: -73.9692, tz: "America/New_York" },   // Central Park
   "nyc":           { lat: 40.7789, lon: -73.9692, tz: "America/New_York" },
-  "london":        { lat: 51.4787, lon: -0.4497,  tz: "Europe/London" },      // Heathrow
-  "paris":         { lat: 48.8566, lon: 2.3522,   tz: "Europe/Paris" },
+  "london":        { lat: 51.505,  lon: 0.055,    tz: "Europe/London" },      // EGLC倫敦城市機場(結算站)
+  "paris":         { lat: 48.9694, lon: 2.4414,   tz: "Europe/Paris" },       // LFPB布爾歇(結算站)
   "seoul":         { lat: 37.5665, lon: 126.978,  tz: "Asia/Seoul" },
   "tokyo":         { lat: 35.6762, lon: 139.6503, tz: "Asia/Tokyo" },
   "los angeles":   { lat: 34.0522, lon: -118.2437,tz: "America/Los_Angeles" },

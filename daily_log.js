@@ -13,7 +13,7 @@
  *     攞天文台總部今日實測最高溫，填返落 forecast_log.csv 對應行，
  *     然後用全部已完成嘅記錄重新計算每個模型嘅bias → bias.json
  *
- * 遠程城市擴展（上海ZSPD/北京ZBAA/倫敦EGLL）：
+ * 遠程城市擴展（上海ZSPD/北京ZBAA/倫敦EGLC/巴黎LFPB）：
  *   forecast模式順手記埋各城市當地「今日」嘅6模型預測
  *     → forecast_log_{city}.csv（每城市一個檔,唔郁香港個檔）
  *   settle模式結算各城市當地「昨日」：用METAR過去48小時報文搵當日最高
@@ -39,7 +39,8 @@ const MIN_SAMPLES = 7; // 至少幾多日數據先出bias
 const REMOTE_CITIES = {
   shanghai: { icao: "ZSPD", lat: 31.143,  lon: 121.805, tz: "Asia/Shanghai" },
   beijing:  { icao: "ZBAA", lat: 40.080,  lon: 116.585, tz: "Asia/Shanghai" },
-  london:   { icao: "EGLL", lat: 51.4787, lon: -0.4497, tz: "Europe/London" },
+  london:   { icao: "EGLC", lat: 51.505,  lon: 0.055,   tz: "Europe/London" }, // 倫敦城市機場(結算站)
+  paris:    { icao: "LFPB", lat: 48.9694, lon: 2.4414,  tz: "Europe/Paris" },  // 巴黎布爾歇(結算站)
 };
 
 function hkToday() {

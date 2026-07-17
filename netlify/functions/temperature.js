@@ -71,12 +71,11 @@ async function fetchMaxMin() {
   return null;
 }
 
-// METAR（VHHH赤鱲角+ZSPD浦東+ZBAA首都+EGLL希斯路）：航空氣象報文，發佈節奏獨立。
+// METAR（VHHH赤鱲角+ZSPD浦東+ZBAA首都+EGLC倫敦城市+LFPB巴黎布爾歇）
 // ⚠️ VHHH做香港平行數據源（機場≠總部，差1-2°C，睇趨勢用）；
-//   ZSPD/ZBAA就係上海北京market嘅結算源本身（METAR整數=全精度）；
-//   EGLL跟scan_cities.js嘅倫敦=Heathrow convention。
+//   ZSPD/ZBAA/EGLC/LFPB就係上海北京倫敦巴黎market嘅結算源本身。
 async function fetchMetar() {
-  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLL&format=json");
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB&format=json");
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};
@@ -126,36 +125,6 @@ async function fetchMetarHistory(icao, hours) {
 
 exports.handler = async function (event) {
   const qp = event?.queryStringParameters || {};
-
-  // 任意機場即時METAR：?ids=KLGA,EGLL,...（最多12個,俾「熱門」tab用）
-  if (qp.ids) {
-    const ids = String(qp.ids).toUpperCase();
-    if (!/^[A-Z]{4}(,[A-Z]{4}){0,11}$/.test(ids)) {
-      return { statusCode: 400, body: JSON.stringify({ error: "ids要係逗號分隔嘅4位ICAO,最多12個" }) };
-    }
-    try {
-      const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${ids}&format=json`);
-      if (!res.ok) throw new Error(`METAR API ${res.status}`);
-      const arr = await res.json();
-      const metars = {};
-      for (const m of Array.isArray(arr) ? arr : []) {
-        if (m.icaoId && typeof m.temp === "number") {
-          metars[m.icaoId] = { tempC: m.temp, obsTime: metarTimeIso(m) };
-        }
-      }
-      return {
-        statusCode: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-          "Netlify-CDN-Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
-        },
-        body: JSON.stringify({ metars }),
-      };
-    } catch (e) {
-      return { statusCode: 502, body: JSON.stringify({ error: e.message }) };
-    }
-  }
 
   if (qp.history) {
     const icao = String(qp.history).toUpperCase();

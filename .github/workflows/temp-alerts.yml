@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# 唔俾兩個run重疊：history.csv係append-only,撞commit嘅話rebase都救唔到
+# (同一行尾巴實conflict),排隊係唯一穩陣做法
+concurrency:
+  group: temp-alerts
+  cancel-in-progress: false
+
 jobs:
   alert:
     runs-on: ubuntu-latest
@@ -18,16 +24,29 @@ jobs:
         with:
           node-version: "20"
 
+      # 數據commit全部去data branch，main唔再俾「chore: temp log」灌爆。
+      # 第一次跑（data branch未存在）會由main HEAD起一個。
+      - name: 攞data branch嘅最新state
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          if git fetch --depth=1 origin data:refs/remotes/origin/data 2>/dev/null; then
+            git worktree add -b data data-branch refs/remotes/origin/data
+          else
+            git worktree add -b data data-branch HEAD
+          fi
+          cp data-branch/alert_state.json data-branch/history.csv . 2>/dev/null || true
+
       - name: 執行溫度警報偵測
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: node alert.js
 
-      - name: 儲存 state + 歷史紀錄
+      - name: 儲存 state + 歷史紀錄（push上data branch）
         run: |
-          git config user.name "weather-bot"
-          git config user.email "actions@github.com"
+          cp alert_state.json history.csv data-branch/ 2>/dev/null || true
+          cd data-branch
           git add alert_state.json history.csv
           git diff --staged --quiet || git commit -m "chore: temp log $(date -u +%H:%M) [skip ci]"
-          git push
+          git push -u origin data

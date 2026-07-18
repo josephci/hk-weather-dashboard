@@ -1,0 +1,29 @@
+name: Nightly Health Check
+
+on:
+  schedule:
+    - cron: "10 14 * * *" # UTC 14:10 = 香港22:10,每晚健康報告推Telegram
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read # 攞workflow run列表檢查有冇fail
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50 # 要睇main近排commit有冇temp log污染
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 健康檢查 + Telegram通知
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node nightly_check.js

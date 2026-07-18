@@ -5,52 +5,89 @@
 //       經自己function代理=冇CORS風險，slug直接命中=payload細。
 //
 // 用法：/.netlify/functions/polymarket?city=hong-kong
-//       city支援: hong-kong | shanghai | beijing
+//       city支援: hong-kong | shanghai | beijing | london | paris
 // ------------------------------------------------------------
 
-const SUPPORTED = ["hong-kong", "shanghai", "beijing"];
+// 每個城市用自己當地時區計「今日」（倫敦同香港差7-8個鐘，唔可以齊用HK時間）
+const CITY_TZ = {
+  "hong-kong": "Asia/Hong_Kong",
+  "shanghai": "Asia/Shanghai",
+  "beijing": "Asia/Shanghai",
+  "london": "Europe/London",
+  "paris": "Europe/Paris",
+};
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+
+// 由一個Gamma event抽bucket現價+單位(同scan_cities.js一致)
+function parseBuckets(ev) {
+  const buckets = [];
+  let unit = "C";
+  for (const mkt of ev.markets || []) {
+    let yesPrice = null;
+    try {
+      const prices = JSON.parse(mkt.outcomePrices || "[]");
+      yesPrice = prices[0] !== undefined ? Math.round(parseFloat(prices[0]) * 100) : null;
+    } catch { /* ignore */ }
+    const label = (mkt.groupItemTitle || mkt.question || "").trim();
+    if (/°f|fahrenheit/i.test(label)) unit = "F";
+    if (yesPrice !== null && label) buckets.push({ label, yesPrice });
+  }
+  return { buckets, unit };
+}
 
 exports.handler = async function (event) {
   try {
     const city = (event.queryStringParameters?.city || "hong-kong").toLowerCase();
-    if (!SUPPORTED.includes(city)) {
-      return { statusCode: 400, body: JSON.stringify({ error: `city要係: ${SUPPORTED.join("/")}` }) };
+    if (!CITY_TZ[city]) {
+      return { statusCode: 400, body: JSON.stringify({ error: `city要係: ${Object.keys(CITY_TZ).join("/")}` }) };
     }
 
-    // 三個城市都係UTC+8，用香港時間計「今日」
-    const hk = new Date(Date.now() + 8 * 3600 * 1000);
-    const y = hk.getUTCFullYear(), m = hk.getUTCMonth(), d = hk.getUTCDate();
-    const slug = `highest-temperature-in-${city}-on-${MONTHS[m]}-${d}`;
+    const dateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: CITY_TZ[city], year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date()); // YYYY-MM-DD
+    const [, m, d] = dateStr.split("-").map(Number);
+    const slug = `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}`;
 
     const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
     if (!res.ok) {
       return { statusCode: 502, body: JSON.stringify({ error: `Gamma API ${res.status}` }) };
     }
     const events = await res.json();
-    const target = Array.isArray(events) ? events[0] : null;
+    let target = Array.isArray(events) ? events[0] : null;
+
+    // slug直接命中唔到(有啲城市slug格式可能唔同)→
+    // fallback:掃weather tag,靠title「Highest temperature in {city} on {month} {d}」配對
+    if (!target) {
+      const res2 = await fetch("https://gamma-api.polymarket.com/events?closed=false&limit=200&tag_slug=weather");
+      if (res2.ok) {
+        const all = await res2.json();
+        const cityName = city.replace(/-/g, " ");
+        const titleRe = new RegExp(`highest temperature in ${cityName} on ${MONTHS[m - 1]} ${d}\\b`, "i");
+        target = (Array.isArray(all) ? all : []).find((ev) => titleRe.test(ev.title || "")) || null;
+      }
+    }
+
+    // CDN cache 60秒(下面found:true同樣):市價喺dashboard本身都係2分鐘先refresh,
+    // 全部tab/device共用一次invocation,慳Netlify credit
+    const CACHE_HEADERS = {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Netlify-CDN-Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+    };
+
     if (!target) {
       return {
         statusCode: 200,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        headers: CACHE_HEADERS,
         body: JSON.stringify({ found: false, slug }),
       };
     }
 
-    const buckets = [];
-    for (const mkt of target.markets || []) {
-      let yesPrice = null;
-      try {
-        const prices = JSON.parse(mkt.outcomePrices || "[]");
-        yesPrice = prices[0] !== undefined ? Math.round(parseFloat(prices[0]) * 100) : null;
-      } catch { /* ignore */ }
-      const label = (mkt.groupItemTitle || mkt.question || "").trim();
-      if (yesPrice !== null && label) buckets.push({ label, yesPrice });
-    }
+    const { buckets } = parseBuckets(target);
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: CACHE_HEADERS,
       body: JSON.stringify({
         found: true,
         title: target.title,

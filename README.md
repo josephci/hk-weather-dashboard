@@ -75,6 +75,21 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 - Open-Meteo嘅hourly precipitation=「之前一小時總量」,current hour嗰格
   就係過去1hr
 
+## Hosting（Netlify ⇄ Cloudflare Pages兩邊都跑得）
+
+前端統一打`/api/temperature`同`/api/polymarket`:
+- **Netlify**: netlify.toml嘅redirect駁去netlify/functions/(有CDN cache header)
+- **Cloudflare Pages**: functions/api/*.js直接命中(Workers runtime)
+
+轉Cloudflare步驟(一次過,~5分鐘):
+1. Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git
+2. 揀呢個repo,production branch=main,Framework=None,build command留空,output directory=`/`
+3. Deploy完會有*.pages.dev網址,即刻用得
+
+點解值得轉:Netlify係credit/月(爆一次鎖成個月,2026-07試過),CF係10萬request/**日**
+(每日reset),dashboard優化後用量~3千/日=CF日限3%,爆極都爆唔到。
+worker.js(警報系統)一直都喺Cloudflare,同一個帳戶。
+
 ## Secrets清單
 
 - GitHub: TG_BOT_TOKEN, TG_CHAT_ID

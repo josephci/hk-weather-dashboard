@@ -517,7 +517,7 @@
 // ============================================================
 const LAT = 22.302, LON = 114.174;
 const METRIC = "max"; // "max" 或 "min"
-const TEMP_ENDPOINT = "/.netlify/functions/temperature"; // 經自己Netlify Function代理，避免CORS
+const TEMP_ENDPOINT = "/api/temperature"; // 平台中立路徑:Netlify經redirect、Cloudflare Pages直接命中
 const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
 const LIVE_POLL_MS = 60_000; // HKO數據幾分鐘先更新一次,30秒poll係浪費function credit
 const FORECAST_POLL_MS = 10 * 60_000;
@@ -526,7 +526,7 @@ const FORECAST_POLL_MS = 10 * 60_000;
 const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/bias.json";
 // history.csv依家住喺data branch（temp-alerts workflow每5分鐘寫嗰邊,main唔再有log commit）
 const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/data/history.csv";
-const PM_ENDPOINT = "/.netlify/functions/polymarket";
+const PM_ENDPOINT = "/api/polymarket";
 
 // 非香港城市設定（結算站=機場座標）
 const REMOTE_CITIES = {

@@ -32,6 +32,7 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
 | alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv(commit去data branch) |
+| nightly_check.js | GitHub Actions | 每晚22:10健康檢查(Actions fail/bias停滯/main污染)→Telegram |
 | watch.js | 本機(可選) | 秒級精度本地監察 |
 | latency_race.js | 本機(實驗) | 渠道延遲測量 |
 

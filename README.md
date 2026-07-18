@@ -68,6 +68,11 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
   0¢/100¢係凌晨未有流動性嘅假價,顯示「市未開價」+鎖定判斷剔除(3-97¢先有效)
 - polymarket function有slug fallback:直接命中唔到就掃weather tag用title配對
   (應對巴黎等slug格式唔同嘅城市)
+- 🌧升返風險(遠程城市):METAR wxString(RA/SHRA/TS=落緊水,事實非預測)+
+  Open-Meteo逐小時(過去1hr/未來2hr雨+今日餘下模型最高)→「升穿今日max風險」
+  高/中/低;倫敦7月19-21°C係海洋性氣候正常事,唔好用香港直覺估溫度
+- Open-Meteo嘅hourly precipitation=「之前一小時總量」,current hour嗰格
+  就係過去1hr
 
 ## Secrets清單
 

@@ -84,6 +84,7 @@ async function fetchMetar() {
       out[m.icaoId] = {
         tempC: m.temp,
         obsTime: metarTimeIso(m),
+        wx: m.wxString || null, // 現在天氣代碼(RA=雨,SHRA=驟雨,TS=雷暴...),升返風險判斷用
       };
     }
   }

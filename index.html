@@ -454,6 +454,18 @@
       </div>
     </section>
 
+    <section class="gauge-panel" style="margin-top:16px;">
+      <div class="panel-title"><span>🌧 降雨 + 升返風險（結算站）</span></div>
+      <div class="stats-row" style="margin-top:0;padding-top:0;border-top:none;">
+        <div class="stat"><div class="k" id="cnWxNow" style="font-size:15px;">--</div><div class="v">結算站而家</div></div>
+        <div class="stat"><div class="k" id="cnRainPast">--</div><div class="v">過去1hr雨</div></div>
+        <div class="stat"><div class="k" id="cnRainNext">--</div><div class="v">未來2hr雨</div></div>
+      </div>
+      <div class="station-line" style="margin-top:12px;">
+        <span id="cnRiseVerdict" style="font-size:13px;">計算中…</span>
+      </div>
+    </section>
+
     <section class="ladder-panel" style="margin-top:16px;">
       <div class="panel-title">
         <span>METAR讀數趨勢（有變化先記一點）</span>
@@ -1062,6 +1074,7 @@ function renderCnLive() {
     document.getElementById('cnTempValue').innerHTML = `--<span class="unit">°C</span>`;
     document.getElementById('cnLiveDot').classList.add('stale');
   }
+  renderCnRiseRisk(); // METAR每次更新都刷新「結算站而家」天氣代碼
 }
 
 async function pollCnCity() {
@@ -1069,6 +1082,7 @@ async function pollCnCity() {
   if (!city) return;
   renderCnLive();
   pollMetarTrend();
+  pollCnRain();
   try {
     // 先攞market判斷單位——倫敦market係°F開盤!模型機率一定要跟market單位計,
     // 唔係就會出現「75°F or below=100%」嘅廢數
@@ -1161,6 +1175,91 @@ async function pollCnCity() {
 function fToC(f) { return Math.round((f - 32) * 5 / 9 * 10) / 10; }
 
 // ============================================================
+// 🌧 降雨+升返風險（結算站）
+// 答一個交易關鍵問題:「今日max仲會唔會俾人升穿?」
+// 輸入:①結算站METAR現在天氣代碼(落緊雨=升溫受壓,係事實唔係預測)
+//      ②Open-Meteo逐小時:過去1hr/未來2hr降雨+今日餘下時間模型最高溫
+// ============================================================
+let cnRainState = null; // {pastMm, next2Mm, remainMaxC, remainMaxHour}
+
+function metarRaining(wx) {
+  return !!wx && /(RA|DZ|SN|SG|GR|GS|UP|TS)/.test(wx);
+}
+
+async function pollCnRain() {
+  const city = REMOTE_CITIES[currentCity];
+  if (!city) return;
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
+      `&hourly=temperature_2m,precipitation&timezone=${encodeURIComponent(city.tz)}&models=${MODELS.join(',')}` +
+      `&forecast_days=1&_=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const times = data.hourly?.time ?? [];
+    const curHour = Math.floor(cityLocalMins(city.tz) / 60);
+    const curIdx = times.findIndex(t => parseInt(t.slice(11,13),10) === curHour);
+    if (curIdx < 0) return;
+
+    const meanAt = (field, i) => {
+      const vals = [];
+      for (const m of MODELS) {
+        const arr = data.hourly?.[`${field}_${m}`];
+        if (arr && arr[i] != null) vals.push(arr[i]);
+      }
+      return vals.length >= 2 ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    };
+
+    // Open-Meteo嘅hourly降雨=「之前一小時總量」→ curIdx嗰格就係過去1hr
+    const pastMm = meanAt('precipitation', curIdx);
+    let next2 = 0, hasNext = false;
+    for (let i = curIdx + 1; i <= Math.min(curIdx + 2, times.length - 1); i++) {
+      const v = meanAt('precipitation', i);
+      if (v !== null) { next2 += v; hasNext = true; }
+    }
+    // 今日餘下時間模型最高(°C,結算站座標)
+    let remainMaxC = null, remainMaxHour = null;
+    for (let i = curIdx; i < times.length; i++) {
+      const v = meanAt('temperature_2m', i);
+      if (v !== null && (remainMaxC === null || v > remainMaxC)) {
+        remainMaxC = v;
+        remainMaxHour = parseInt(times[i].slice(11, 13), 10);
+      }
+    }
+    cnRainState = { pastMm, next2Mm: hasNext ? next2 : null, remainMaxC, remainMaxHour };
+    renderCnRiseRisk();
+  } catch { /* 靜默,下個poll再試 */ }
+}
+
+function renderCnRiseRisk() {
+  const city = REMOTE_CITIES[currentCity];
+  if (!city) return;
+  const wx = lastMetars?.[city.icao]?.wx ?? null;
+  const raining = metarRaining(wx);
+  document.getElementById('cnWxNow').textContent = wx ? (raining ? `🌧${wx}` : wx) : '乾';
+  document.getElementById('cnRainPast').textContent =
+    (cnRainState?.pastMm ?? null) === null ? '--' : cnRainState.pastMm.toFixed(1) + 'mm';
+  document.getElementById('cnRainNext').textContent =
+    (cnRainState?.next2Mm ?? null) === null ? '--' : cnRainState.next2Mm.toFixed(1) + 'mm';
+
+  const verdictEl = document.getElementById('cnRiseVerdict');
+  if (!cnRainState || cnRainState.remainMaxC === null || metarTodayMax === null) {
+    verdictEl.textContent = '等緊模型/METAR數據…';
+    return;
+  }
+  const gap = cnRainState.remainMaxC - metarTodayMax; // 兩邊都係°C
+  const curHour = Math.floor(cityLocalMins(city.tz) / 60);
+  let risk;
+  if (curHour >= 19 || gap <= -0.5) risk = '低';
+  else if (gap < 0.7) risk = raining ? '低' : '中';
+  else risk = raining ? '中' : '高';
+
+  const reasons = [`模型預計今日餘下最高~${cnRainState.remainMaxC.toFixed(1)}°C(當地${String(cnRainState.remainMaxHour).padStart(2,'0')}:00)`];
+  if (raining) reasons.push('結算站落緊水,升溫受壓');
+  if (curHour >= 19) reasons.push('已過當地高峰時段');
+  verdictEl.textContent = `${reasons.join(' · ')} → 升穿今日max(${fmtMetarTemp(metarTodayMax)}°)風險:${risk}`;
+}
+
+// ============================================================
 // METAR讀數趨勢（結算源逐次讀數，有變化先記一點）
 // 經temperature function攞返過去26小時報文 → 篩城市當地「今日」
 // → 只保留同上一個讀數唔同嘅（首個必留）→ step chart
@@ -1237,9 +1336,10 @@ function renderMetarTrend(changes, totalReports, city) {
 
   note.textContent = `今日${totalReports}份報文 · ${changes.length}次變化 · 最新 ${fmtMetarTemp(lastV)}°（當地 ${fmtMins(changes[changes.length-1].mins)} 起）`;
 
-  // METAR已實現max就係鎖定判斷嘅事實基礎
+  // METAR已實現max就係鎖定判斷同升返風險嘅事實基礎
   metarTodayMax = maxV;
   renderLocksCn();
+  renderCnRiseRisk();
 }
 
 // ============================================================
@@ -1434,6 +1534,7 @@ document.querySelectorAll('.city-tab').forEach(tab => {
       metarTodayMax = null;
       cnPmBuckets = null;
       cnMarketUnit = 'C';
+      cnRainState = null;
       renderLocks('lockListCn', null, null);
       pollCnCity();
     }

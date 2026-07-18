@@ -1,0 +1,12 @@
+// Cloudflare Workers設定——俾dashboard嘅「Connect to Git」Workers流程用
+// (npx wrangler deploy會讀呢個檔:static assets=成個repo,/api/*行cf-worker.js)
+// 用Pages流程嘅話唔會用到呢個檔,兩邊並存冇衝突。
+{
+  "name": "hk-weather-dashboard",
+  "main": "cf-worker.js",
+  "compatibility_date": "2026-01-01",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS"
+  }
+}

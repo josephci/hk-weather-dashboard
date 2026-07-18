@@ -1,6 +1,13 @@
 [build]
   functions = "netlify/functions"
 
+# 前端統一用/api/*路徑,Netlify靠呢個redirect駁去functions;
+# Cloudflare Pages就直接由functions/api/*.js接手——兩邊同一份code都跑得
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
 [[headers]]
   for = "/*"
   [headers.values]

@@ -468,11 +468,11 @@
 
     <section class="ladder-panel" style="margin-top:16px;">
       <div class="panel-title">
-        <span>METAR讀數趨勢（有變化先記一點）</span>
+        <span>METAR讀數記錄（逐份報文照錄）</span>
         <span class="flag" id="metarTrendMax"></span>
       </div>
       <svg class="trend-svg" id="metarTrendSvg" viewBox="0 0 360 140" preserveAspectRatio="none"></svg>
-      <div id="metarChangeList" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px;line-height:1.8;"></div>
+      <div id="metarChangeList" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px;line-height:1.8;max-height:112px;overflow-y:auto;"></div>
       <div class="station-line" style="margin-top:4px;"><span id="metarTrendNote" style="font-size:12px;color:var(--muted);">載入中…</span></div>
     </section>
 
@@ -566,6 +566,26 @@ function normalCdf(x, mean, std) {
   return 0.5*(1+erf((x-mean)/(std*Math.SQRT2)));
 }
 
+// fetch加timeout+重試:應對「睇咗一陣都load唔到」——aviationweather/
+// Gamma有時慢或者手機網絡跳掣,自動重試一次好過等用戶手動refresh
+async function fetchRetry(url, opts = {}, tries = 2, timeoutMs = 15000) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(url, { ...opts, signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok || i === tries - 1) return res;
+      lastErr = new Error('HTTP ' + res.status);
+    } catch (e) {
+      lastErr = e;
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  throw lastErr;
+}
+
 function showError(msg) {
   const el = document.getElementById('errorBanner');
   el.textContent = msg;
@@ -583,7 +603,7 @@ let lastRecordTime = null;
 async function pollLive() {
   try {
     // ⚠️ 唔好加?_=時間戳:會令Netlify CDN cache永遠miss,每次poll都真跑function
-    const res = await fetch(TEMP_ENDPOINT, { cache: 'no-store' });
+    const res = await fetchRetry(TEMP_ENDPOINT, { cache: 'no-store' });
     if (!res.ok) throw new Error('function ' + res.status);
     const json = await res.json();
 
@@ -1088,7 +1108,7 @@ async function pollCnCity() {
     // 唔係就會出現「75°F or below=100%」嘅廢數
     let pm = null;
     try {
-      const pmRes = await fetch(`${PM_ENDPOINT}?city=${city.pmCity}`, { cache: 'no-store' });
+      const pmRes = await fetchRetry(`${PM_ENDPOINT}?city=${city.pmCity}`, { cache: 'no-store' });
       if (pmRes.ok) pm = await pmRes.json();
     } catch { /* market攞唔到照出模型預測 */ }
     const unit = (pm?.found && pm.buckets.some(b => /°f|fahrenheit/i.test(b.label))) ? 'F' : 'C';
@@ -1260,16 +1280,17 @@ function renderCnRiseRisk() {
 }
 
 // ============================================================
-// METAR讀數趨勢（結算源逐次讀數，有變化先記一點）
+// METAR讀數記錄（結算源逐份報文,唔理有冇變化都照錄——
+// 用戶要親眼睇到最新報文時間,先知數據係咪新鮮）
 // 經temperature function攞返過去26小時報文 → 篩城市當地「今日」
-// → 只保留同上一個讀數唔同嘅（首個必留）→ step chart
+// → 全部入列表(新→舊,變化嗰啲highlight),chart用壓縮step
 // ============================================================
 async function pollMetarTrend() {
   const city = REMOTE_CITIES[currentCity];
   if (!city) return;
   const note = document.getElementById('metarTrendNote');
   try {
-    const res = await fetch(`${TEMP_ENDPOINT}?history=${city.icao}`, { cache: 'no-store' });
+    const res = await fetchRetry(`${TEMP_ENDPOINT}?history=${city.icao}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('function ' + res.status);
     const json = await res.json();
     if (!Array.isArray(json.history) || !json.history.length) throw new Error('未有歷史METAR');
@@ -1280,15 +1301,9 @@ async function pollMetarTrend() {
       .filter(p => !Number.isNaN(p.d.getTime()) && typeof p.v === 'number' && cityLocalDate(city.tz, p.d) === today)
       .sort((a, b) => a.d - b.d);
     if (!pts.length) { note.textContent = '城市當地今日仲未有METAR報文'; return; }
+    pts.forEach(p => { p.mins = cityLocalMins(city.tz, p.d); });
 
-    // 有變化先記：連續相同讀數壓縮成一點
-    const changes = [];
-    for (const p of pts) {
-      if (!changes.length || changes[changes.length - 1].v !== p.v) {
-        changes.push({ mins: cityLocalMins(city.tz, p.d), v: p.v });
-      }
-    }
-    renderMetarTrend(changes, pts.length, city);
+    renderMetarTrend(pts, city);
   } catch (e) {
     note.textContent = 'METAR趨勢攞唔到：' + e.message;
   }
@@ -1297,17 +1312,26 @@ async function pollMetarTrend() {
 function fmtMetarTemp(v) { return Number.isInteger(v) ? String(v) : v.toFixed(1); }
 function fmtMins(mins) { return `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`; }
 
-function renderMetarTrend(changes, totalReports, city) {
+function renderMetarTrend(pts, city) {
   const svg = document.getElementById('metarTrendSvg');
   const listEl = document.getElementById('metarChangeList');
   const note = document.getElementById('metarTrendNote');
   const maxEl = document.getElementById('metarTrendMax');
 
-  const maxV = Math.max(...changes.map(c => c.v));
+  // chart用壓縮step(連續相同讀數一點),列表就全份照錄
+  const changes = [];
+  for (const p of pts) {
+    if (!changes.length || changes[changes.length - 1].v !== p.v) changes.push(p);
+  }
+
+  const maxV = Math.max(...pts.map(c => c.v));
   maxEl.textContent = `今日max ${fmtMetarTemp(maxV)}°`;
 
-  // 變化記錄列表（半個鐘一份報文,通常一日<10次變化）
-  listEl.textContent = changes.map(c => `${fmtMins(c.mins)} ${fmtMetarTemp(c.v)}°`).join(' → ');
+  // 全報文列表:新→舊,同上一份唔同嘅highlight,一眼睇到最新報文幾點
+  listEl.innerHTML = [...pts].reverse().map((p, i, arr) => {
+    const changed = i === arr.length - 1 || arr[i + 1].v !== p.v;
+    return `<span style="${changed ? 'color:var(--brass);font-weight:600;' : ''}">${fmtMins(p.mins)} ${fmtMetarTemp(p.v)}°</span>`;
+  }).join('<span style="opacity:0.4;"> · </span>');
 
   const W = 360, H = 140, PAD = 24;
   const nowMins = cityLocalMins(city.tz);
@@ -1322,8 +1346,9 @@ function renderMetarTrend(changes, totalReports, city) {
     path += ` L${x(changes[i].mins).toFixed(1)},${y(changes[i-1].v).toFixed(1)}`;
     path += ` L${x(changes[i].mins).toFixed(1)},${y(changes[i].v).toFixed(1)}`;
   }
-  const lastV = changes[changes.length - 1].v;
-  path += ` L${x(Math.max(nowMins, changes[changes.length - 1].mins)).toFixed(1)},${y(lastV).toFixed(1)}`;
+  const lastPt = pts[pts.length - 1]; // 最尾延到最新「報文」時間(唔係最新變化),反映真實新鮮度
+  const lastV = lastPt.v;
+  path += ` L${x(Math.max(nowMins, lastPt.mins)).toFixed(1)},${y(lastV).toFixed(1)}`;
 
   const peak = changes.find(c => c.v === maxV);
   svg.innerHTML =
@@ -1334,7 +1359,10 @@ function renderMetarTrend(changes, totalReports, city) {
     `<text class="trend-label" x="${PAD}" y="${H-6}">00:00</text>` +
     `<text class="trend-label" x="${W-PAD-30}" y="${H-6}">24:00</text>`;
 
-  note.textContent = `今日${totalReports}份報文 · ${changes.length}次變化 · 最新 ${fmtMetarTemp(lastV)}°（當地 ${fmtMins(changes[changes.length-1].mins)} 起）`;
+  // 新鮮度:最新報文幾耐之前(半個鐘一份為常態,>75分鐘=有嘢唔對路)
+  const ageMin = Math.round((Date.now() - lastPt.d.getTime()) / 60000);
+  const staleWarn = ageMin > 75 ? ' ⚠️耐冇新報文' : '';
+  note.textContent = `今日${pts.length}份報文 · ${changes.length}次變化 · 最新報文 當地${fmtMins(lastPt.mins)}（${ageMin}分鐘前）${staleWarn}`;
 
   // METAR已實現max就係鎖定判斷同升返風險嘅事實基礎
   metarTodayMax = maxV;
@@ -1545,7 +1573,11 @@ document.querySelectorAll('.city-tab').forEach(tab => {
 // Clock + init
 // ============================================================
 function tickClock() {
-  document.getElementById('clock').textContent = new Date().toLocaleTimeString('zh-HK', { hour12:false });
+  // 手動砌HH:MM:SS——iOS Safari嘅zh-HK+hour12:false會將中午12點顯示成
+  // 「00:03:05」,用戶以為個站死咗
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 setInterval(tickClock, 1000); tickClock();
 
@@ -1556,8 +1588,9 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
 
 // 背景tab唔poll:收埋嘅tab照poll係浪費function credit,
 // 返嚟嗰下visibilitychange會即刻補一次
+let lastActivePoll = Date.now();
 function whenVisible(fn) {
-  return () => { if (!document.hidden) fn(); };
+  return () => { if (!document.hidden) { lastActivePoll = Date.now(); fn(); } };
 }
 
 pollLive();
@@ -1577,8 +1610,16 @@ setInterval(whenVisible(() => { if (REMOTE_CITIES[currentCity]) pollCnCity(); })
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
+    // 閂咗屏幕>2分鐘返嚟:全面刷新晒所有panel,
+    // 唔等各自interval(以前預測嗰啲要等最耐15分鐘先自己更新→「唔係最新數據」)
+    const staleResume = Date.now() - lastActivePoll > 2 * 60_000;
+    lastActivePoll = Date.now();
     pollLive(); pollEdgeHk();
     if (REMOTE_CITIES[currentCity]) pollCnCity();
+    if (staleResume) {
+      pollForecast(); pollTomorrow(); pollTrend(); fetchOmHourly();
+      setTimeout(pollHourNowcast, 3000); // 等live/hourly返嚟先合成
+    }
   }
 });
 </script>

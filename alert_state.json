@@ -1,20 +1,11 @@
 {
-  "date": "2026-07-21",
-  "prevCurrent": 28,
-  "prevMax": 30.9,
-  "alertedFloors": [
-    29,
-    30
-  ],
-  "approachAlerted": 31,
-  "pulledBackAlerted": true,
+  "date": "2026-07-22",
+  "prevCurrent": 27.9,
+  "prevMax": 28,
+  "alertedFloors": [],
+  "approachAlerted": null,
+  "pulledBackAlerted": false,
   "lastWarnCodes": "",
-  "edgeAlerted": {
-    "30°C": -41,
-    "31°C": 42
-  },
-  "fastAlerted": [
-    29,
-    31
-  ]
+  "edgeAlerted": {},
+  "fastAlerted": []
 }

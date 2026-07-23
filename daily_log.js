@@ -169,6 +169,22 @@ async function forecastRemoteCity(key, cfg) {
 
 // ---------- settle模式 ----------
 async function runSettle() {
+  const rows = loadLog();
+
+  // ⚠️保險:GitHub cron延遲可以成80分鐘,22:15排程都可能拖過香港午夜。
+  // 過咗午夜嘅話,maxmin CSV已經係「新一日至今」(得凌晨個零鐘嘅假max),
+  // 尋日真max已攞唔返——寧願skip香港settle,都唔好寫錯數(2026-07-23實例)
+  const hkHour = new Date(Date.now() + 8 * 3600e3).getUTCHours();
+  if (hkHour >= 12) {
+    await settleHk(rows);
+  } else {
+    console.log(`⚠️ 延遲跨咗香港午夜(HK ${hkHour}點),maxmin CSV得新一日凌晨數據,skip香港settle`);
+  }
+
+  await settleAndWriteBias(rows);
+}
+
+async function settleHk(rows) {
   const today = hkToday();
   const res = await fetch(MAXMIN_CSV_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`maxmin CSV ${res.status}`);
@@ -181,13 +197,16 @@ async function runSettle() {
   }
   if (realized === null || Number.isNaN(realized)) throw new Error("攞唔到今日實測最高溫");
 
-  const rows = loadLog();
   let row = rows.find((r) => r.date === today);
   if (!row) { row = { date: today, forecasts: {}, realized: "" }; rows.push(row); }
   row.realized = realized.toFixed(1);
   saveLog(rows);
   console.log(`✅ 已記錄 ${today} 實測最高溫: ${realized.toFixed(1)}°C`);
+}
 
+// 遠程城市settle+寫bias.json——就算香港嗰part被skip都照做
+// (遠程城市結算「當地昨日」用METAR 48hr報文,延遲跨午夜都攞得返正確數據)
+async function settleAndWriteBias(rows) {
   // ---- 遠程城市:結算當地「昨日」+計bias ----
   // 讀返舊bias.json,邊個城市今次fail就保留佢上次嘅值
   let oldBias = {};

@@ -3,7 +3,9 @@ name: Daily Bias Pipeline
 on:
   schedule:
     - cron: "15 23 * * *" # UTC 23:15 = 香港07:15，記錄今日模型預測
-    - cron: "45 15 * * *" # UTC 15:45 = 香港23:45，記錄今日實測+重計bias
+    # settle set早啲(22:15 HKT):GitHub cron實測會遲成~80分鐘,23:45嘅話
+    # 會跨香港午夜,settle錯日兼讀到凌晨嘅假max(2026-07-23實際發生過)
+    - cron: "15 14 * * *" # UTC 14:15 = 香港22:15，記錄今日實測+重計bias
   workflow_dispatch:
     inputs:
       mode:
@@ -26,10 +28,12 @@ jobs:
 
       - name: 決定模式
         id: mode
+        # ⚠️唔可以用「而家幾點」判斷:GitHub cron延遲過鐘(23:15排程00:07先行),
+        # 曾令朝班全部錯行settle。github.event.schedule=觸發嗰條cron,延遲都唔變
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
-          elif [ "$(date -u +%H)" = "23" ]; then
+          elif [ "${{ github.event.schedule }}" = "15 23 * * *" ]; then
             echo "mode=forecast" >> $GITHUB_OUTPUT
           else
             echo "mode=settle" >> $GITHUB_OUTPUT

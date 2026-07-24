@@ -1,17 +1,11 @@
 {
-  "date": "2026-07-24",
-  "prevCurrent": 30,
-  "prevMax": 33.7,
-  "alertedFloors": [
-    32,
-    33
-  ],
-  "approachAlerted": 34,
-  "pulledBackAlerted": true,
+  "date": "2026-07-25",
+  "prevCurrent": 29.8,
+  "prevMax": 30,
+  "alertedFloors": [],
+  "approachAlerted": null,
+  "pulledBackAlerted": false,
   "lastWarnCodes": "WTCSGNL",
-  "edgeAlerted": {
-    "34°C": -57,
-    "33°C": 51
-  },
+  "edgeAlerted": {},
   "fastAlerted": []
 }

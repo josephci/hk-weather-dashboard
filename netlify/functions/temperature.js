@@ -91,20 +91,47 @@ async function fetchMetar() {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-// 過去一小時降雨(rhrread):攞油尖旺(天文台總部所在區)+全港最大值
-async function fetchRain() {
+// rhrread一次過攞雨量+溫度:溫度做「雙水喉」後備(整數°C但快~4分鐘,
+// 1分鐘CSV滯後嗰陣頂上)
+async function fetchRhrread() {
   const res = await fetch("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc");
   if (!res.ok) throw new Error(`rhrread ${res.status}`);
   const json = await res.json();
+
+  let rain = null;
   const data = json.rainfall?.data;
-  if (!Array.isArray(data)) return null;
-  let local = null, maxMm = 0, maxDistrict = null;
-  for (const d of data) {
-    const mm = typeof d.max === "number" ? d.max : 0;
-    if (d.place === "油尖旺") local = mm;
-    if (mm > maxMm) { maxMm = mm; maxDistrict = d.place; }
+  if (Array.isArray(data)) {
+    let local = null, maxMm = 0, maxDistrict = null;
+    for (const d of data) {
+      const mm = typeof d.max === "number" ? d.max : 0;
+      if (d.place === "油尖旺") local = mm;
+      if (mm > maxMm) { maxMm = mm; maxDistrict = d.place; }
+    }
+    rain = { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
   }
-  return { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
+
+  let temp = null;
+  const tArr = json.temperature?.data;
+  if (Array.isArray(tArr)) {
+    const hko = tArr.find((t) => t.place === "香港天文台" && typeof t.value === "number");
+    if (hko) temp = { value: hko.value, recordTime: json.temperature?.recordTime ?? null };
+  }
+
+  return { rain, temp };
+}
+
+// 揀邊條水喉:CSV有0.1°精度優先;但CSV滯後>20分鐘而rhrread更新鮮就轉用
+function pickLive(csvLive, rrTemp) {
+  const age = (t) => t ? Date.now() - new Date(t).getTime() : Infinity;
+  const csvAge = age(csvLive?.recordTime);
+  const rrAge = age(rrTemp?.recordTime);
+  if (csvLive && csvLive.value !== null && (csvAge <= 20 * 60e3 || rrAge >= csvAge)) {
+    return { ...csvLive, source: "csv" };
+  }
+  if (rrTemp && rrTemp.recordTime) {
+    return { recordTime: rrTemp.recordTime, value: rrTemp.value, source: "rhrread" };
+  }
+  return csvLive ? { ...csvLive, source: "csv" } : null;
 }
 
 // 歷史METAR序列：?history=ZSPD&hours=26
@@ -151,12 +178,15 @@ exports.handler = async function (event) {
     }
   }
 
-  const [liveResult, maxMinResult, metarResult, rainResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar(), fetchRain()]);
+  const [liveResult, maxMinResult, metarResult, rhrreadResult] = await Promise.allSettled([fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread()]);
 
   const response = {};
 
-  if (liveResult.status === "fulfilled" && liveResult.value) {
-    response.live = liveResult.value; // { recordTime, value }
+  const csvLive = liveResult.status === "fulfilled" ? liveResult.value : null;
+  const rrTemp = rhrreadResult.status === "fulfilled" ? rhrreadResult.value?.temp : null;
+  const live = pickLive(csvLive, rrTemp);
+  if (live && live.value !== null) {
+    response.live = live; // { recordTime, value, source }
   } else {
     response.liveError = liveResult.status === "rejected" ? liveResult.reason.message : "搵唔到即時溫度站資料";
   }
@@ -173,8 +203,8 @@ exports.handler = async function (event) {
     response.metar = metarResult.value.VHHH || null; // 向後兼容舊前端
   }
 
-  if (rainResult.status === "fulfilled" && rainResult.value) {
-    response.rain = rainResult.value; // { localMm, maxMm, maxDistrict, endTime }
+  if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
+    response.rain = rhrreadResult.value.rain; // { localMm, maxMm, maxDistrict, endTime }
   }
 
   const ok = !response.liveError;

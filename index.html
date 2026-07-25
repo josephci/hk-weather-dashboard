@@ -613,7 +613,13 @@ async function pollLive() {
     const value = json.live.value.toFixed(1);
     document.getElementById('tempValue').innerHTML = `${value}<span class="unit">°C</span>`;
     document.getElementById('stationPlace').textContent = '香港天文台總部';
-    document.getElementById('recordTime').textContent = formatRelativeTime(json.live.recordTime);
+    // 滯後警告+後備來源提示:讀數舊唔一定係app壞,可能係HKO源頭滯後
+    const liveAgeMin = Math.round((Date.now() - new Date(json.live.recordTime).getTime()) / 60000);
+    const srcNote = json.live.source === 'rhrread' ? ' · rhrread後備(整數)' : '';
+    const staleNote = liveAgeMin > 30 ? ' ⚠️HKO源頭滯後' : '';
+    const rtEl = document.getElementById('recordTime');
+    rtEl.textContent = formatRelativeTime(json.live.recordTime) + srcNote + staleNote;
+    rtEl.style.color = liveAgeMin > 30 ? 'var(--warm)' : '';
 
     if (json.today && !json.todayError) {
       document.getElementById('todayMax').textContent = (json.today.max ?? '--').toString() + '°';

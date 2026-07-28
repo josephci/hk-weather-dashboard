@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-07-28T00:11:03.472Z",
-  "sampleDays": 26,
+  "generatedAt": "2026-07-28T17:08:38.616Z",
+  "sampleDays": 27,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
     "gfs_seamless": 1.38,
@@ -13,11 +13,11 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 0,
+      "sampleDays": 1,
       "max": {}
     },
     "beijing": {
-      "sampleDays": 0,
+      "sampleDays": 1,
       "max": {}
     },
     "london": {
@@ -25,7 +25,7 @@
       "max": {}
     },
     "paris": {
-      "sampleDays": 1,
+      "sampleDays": 0,
       "max": {}
     }
   }

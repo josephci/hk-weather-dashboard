@@ -32,8 +32,10 @@ function metarTimeIso(m) {
   } catch { return null; }
 }
 
+// ⚠️所有上游fetch都要cache:"no-store"——Workers嘅fetch()預設經Cloudflare
+// edge cache,HKO嘅CSV試過俾佢食住舊版個零鐘,dashboard以為讀數唔更新
 async function fetchLive() {
-  const res = await fetch(LIVE_CSV_URL);
+  const res = await fetch(LIVE_CSV_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`latest_1min_temperature CSV 錯誤: ${res.status}`);
   const lines = (await res.text()).trim().split(/\r?\n/).slice(1);
   for (const line of lines) {
@@ -46,7 +48,7 @@ async function fetchLive() {
 }
 
 async function fetchMaxMin() {
-  const res = await fetch(MAXMIN_CSV_URL);
+  const res = await fetch(MAXMIN_CSV_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`latest_since_midnight_maxmin CSV 錯誤: ${res.status}`);
   const lines = (await res.text()).trim().split(/\r?\n/).slice(1);
   for (const line of lines) {
@@ -60,7 +62,7 @@ async function fetchMaxMin() {
 }
 
 async function fetchMetar() {
-  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB&format=json");
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB&format=json", { cache: "no-store" });
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};
@@ -72,23 +74,51 @@ async function fetchMetar() {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-async function fetchRain() {
-  const res = await fetch("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc");
+// rhrread一次過攞雨量+溫度:溫度做「雙水喉」後備(整數°C但快~4分鐘,
+// 1分鐘CSV滯後嗰陣頂上——worker.js一早係咁設計,dashboard跟隊)
+async function fetchRhrread() {
+  const res = await fetch("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc", { cache: "no-store" });
   if (!res.ok) throw new Error(`rhrread ${res.status}`);
   const json = await res.json();
+
+  let rain = null;
   const data = json.rainfall?.data;
-  if (!Array.isArray(data)) return null;
-  let local = null, maxMm = 0, maxDistrict = null;
-  for (const d of data) {
-    const mm = typeof d.max === "number" ? d.max : 0;
-    if (d.place === "油尖旺") local = mm;
-    if (mm > maxMm) { maxMm = mm; maxDistrict = d.place; }
+  if (Array.isArray(data)) {
+    let local = null, maxMm = 0, maxDistrict = null;
+    for (const d of data) {
+      const mm = typeof d.max === "number" ? d.max : 0;
+      if (d.place === "油尖旺") local = mm;
+      if (mm > maxMm) { maxMm = mm; maxDistrict = d.place; }
+    }
+    rain = { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
   }
-  return { localMm: local, maxMm, maxDistrict, endTime: json.rainfall?.endTime ?? null };
+
+  let temp = null;
+  const tArr = json.temperature?.data;
+  if (Array.isArray(tArr)) {
+    const hko = tArr.find((t) => t.place === "香港天文台" && typeof t.value === "number");
+    if (hko) temp = { value: hko.value, recordTime: json.temperature?.recordTime ?? null };
+  }
+
+  return { rain, temp };
+}
+
+// 揀邊條水喉:CSV有0.1°精度優先;但CSV滯後>20分鐘而rhrread更新鮮就轉用
+export function pickLive(csvLive, rrTemp) {
+  const age = (t) => t ? Date.now() - new Date(t).getTime() : Infinity;
+  const csvAge = age(csvLive?.recordTime);
+  const rrAge = age(rrTemp?.recordTime);
+  if (csvLive && csvLive.value !== null && (csvAge <= 20 * 60e3 || rrAge >= csvAge)) {
+    return { ...csvLive, source: "csv" };
+  }
+  if (rrTemp && rrTemp.recordTime) {
+    return { recordTime: rrTemp.recordTime, value: rrTemp.value, source: "rhrread" };
+  }
+  return csvLive ? { ...csvLive, source: "csv" } : null;
 }
 
 async function fetchMetarHistory(icao, hours) {
-  const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=${hours}`);
+  const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=${hours}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`METAR history API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = [];
@@ -123,13 +153,16 @@ export async function onRequest(context) {
     }
   }
 
-  const [liveResult, maxMinResult, metarResult, rainResult] = await Promise.allSettled([
-    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRain(),
+  const [liveResult, maxMinResult, metarResult, rhrreadResult] = await Promise.allSettled([
+    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread(),
   ]);
 
   const response = {};
-  if (liveResult.status === "fulfilled" && liveResult.value) {
-    response.live = liveResult.value;
+  const csvLive = liveResult.status === "fulfilled" ? liveResult.value : null;
+  const rrTemp = rhrreadResult.status === "fulfilled" ? rhrreadResult.value?.temp : null;
+  const live = pickLive(csvLive, rrTemp);
+  if (live && live.value !== null) {
+    response.live = live;
   } else {
     response.liveError = liveResult.status === "rejected" ? liveResult.reason.message : "搵唔到即時溫度站資料";
   }
@@ -143,8 +176,8 @@ export async function onRequest(context) {
     response.metars = metarResult.value;
     response.metar = metarResult.value.VHHH || null;
   }
-  if (rainResult.status === "fulfilled" && rainResult.value) {
-    response.rain = rainResult.value;
+  if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
+    response.rain = rhrreadResult.value.rain;
   }
 
   return json(response, response.liveError ? 502 : 200);

@@ -65,6 +65,90 @@ function logFileFor(cityKey) {
   return path.join(__dirname, `forecast_log_${cityKey}.csv`);
 }
 
+// ---------- 校準記錄 ----------
+// 每朝記低「我哋話某個bucket有幾多%機會」,晚上對返實際邊格中。
+// 累積落嚟就答到:「話70%嗰啲,實際係咪真係7成中?」——冇呢個
+// feedback loop,所有edge數字都係憑感覺信。
+const CALIB_LOG = path.join(__dirname, "calibration_log.csv");
+const CALIB_HEADER = "date,bucket,prob,hit";
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t = 1/(1+p*x);
+  return sign * (1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));
+}
+function normalCdf(x, mean, std) {
+  if (std === 0) return x >= mean ? 1 : 0;
+  return 0.5*(1+erf((x-mean)/(std*Math.SQRT2)));
+}
+
+function loadCalib() {
+  if (!fs.existsSync(CALIB_LOG)) return [];
+  return fs.readFileSync(CALIB_LOG, "utf-8").trim().split(/\r?\n/).slice(1)
+    .map((line) => {
+      const [date, bucket, prob, hit] = line.split(",");
+      return { date, bucket: parseInt(bucket, 10), prob: parseFloat(prob), hit };
+    })
+    .filter((r) => r.date && !Number.isNaN(r.bucket));
+}
+
+function saveCalib(rows) {
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.bucket - b.bucket);
+  const lines = [CALIB_HEADER, ...rows.map((r) => `${r.date},${r.bucket},${r.prob.toFixed(4)},${r.hit ?? ""}`)];
+  fs.writeFileSync(CALIB_LOG, lines.join("\n") + "\n");
+}
+
+// 記低今朝個機率分佈(用同dashboard一樣嘅口徑:6模型+bias,未條件化)
+function recordCalibForecast(date, values) {
+  const n = values.length;
+  if (n < 2) return;
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  const std = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(n - 1, 1));
+  const rows = loadCalib().filter((r) => r.date !== date); // 同日重跑就覆蓋
+  const range = Math.max(4 * std, 3);
+  for (let b = Math.floor(mean - range); b < Math.ceil(mean + range); b++) {
+    const p = normalCdf(b + 1, mean, std) - normalCdf(b, mean, std);
+    if (p >= 0.02) rows.push({ date, bucket: b, prob: p, hit: "" });
+  }
+  saveCalib(rows);
+  console.log(`✅ 已記錄 ${date} 校準快照(${rows.filter((r) => r.date === date).length}個bucket)`);
+}
+
+// 對答案:實測max落喺邊格
+function settleCalib(date, realized) {
+  const rows = loadCalib();
+  const todays = rows.filter((r) => r.date === date);
+  if (!todays.length) return;
+  const hitBucket = Math.floor(realized);
+  for (const r of todays) r.hit = r.bucket === hitBucket ? "1" : "0";
+  saveCalib(rows);
+  const hitRow = todays.find((r) => r.bucket === hitBucket);
+  console.log(`✅ ${date} 校準對答案: 實測${realized}° 落喺${hitBucket}°格` +
+    (hitRow ? `(當時話${(hitRow.prob * 100).toFixed(0)}%)` : "(當時冇預測呢格!)"));
+  reportReliability(rows);
+}
+
+// 可靠度表:話X%嘅,實際中幾多%
+function reportReliability(rows) {
+  const done = rows.filter((r) => r.hit === "1" || r.hit === "0");
+  if (done.length < 20) {
+    console.log(`ℹ️ 校準樣本${done.length}個(要20個先出可靠度表)`);
+    return;
+  }
+  const bands = [[0, .1], [.1, .25], [.25, .5], [.5, .75], [.75, 1.01]];
+  console.log("📊 可靠度(話幾多% → 實際中幾多%):");
+  for (const [lo, hi] of bands) {
+    const inBand = done.filter((r) => r.prob >= lo && r.prob < hi);
+    if (!inBand.length) continue;
+    const actual = inBand.filter((r) => r.hit === "1").length / inBand.length;
+    const said = inBand.reduce((a, r) => a + r.prob, 0) / inBand.length;
+    const gap = actual - said;
+    const verdict = Math.abs(gap) < 0.08 ? "✓準" : gap > 0 ? "↑實際高過講(過份保守)" : "↓實際低過講(過份自信)";
+    console.log(`  ${(lo*100).toFixed(0)}-${(hi*100).toFixed(0)}%: 講${(said*100).toFixed(0)}% 實際${(actual*100).toFixed(0)}% (n=${inBand.length}) ${verdict}`);
+  }
+}
+
 function parseArgs() {
   const args = Object.fromEntries(
     process.argv.slice(2).map((a) => {
@@ -136,6 +220,16 @@ async function runForecast() {
   saveLog(rows);
   console.log(`✅ 已記錄 ${today} 嘅模型預測:`, MODELS.map((m) => `${m}=${row.forecasts[m] || "N/A"}`).join(" "));
 
+  // 校準快照:用今朝加咗bias嘅預測(同dashboard口徑一致)
+  try {
+    const bias = JSON.parse(fs.readFileSync(BIAS_FILE, "utf-8")).max || {};
+    const vals = MODELS.filter((m) => row.forecasts[m])
+      .map((m) => parseFloat(row.forecasts[m]) + (bias[m] || 0));
+    recordCalibForecast(today, vals);
+  } catch (e) {
+    console.log("⚠️ 校準快照失敗(唔影響其他):", e.message);
+  }
+
   // ---- 遠程城市:記當地「今日」預測(邊個城市fail唔影響其他) ----
   for (const [key, cfg] of Object.entries(REMOTE_CITIES)) {
     try {
@@ -169,6 +263,22 @@ async function forecastRemoteCity(key, cfg) {
 
 // ---------- settle模式 ----------
 async function runSettle() {
+  const rows = loadLog();
+
+  // ⚠️保險:GitHub cron延遲可以成80分鐘,22:15排程都可能拖過香港午夜。
+  // 過咗午夜嘅話,maxmin CSV已經係「新一日至今」(得凌晨個零鐘嘅假max),
+  // 尋日真max已攞唔返——寧願skip香港settle,都唔好寫錯數(2026-07-23實例)
+  const hkHour = new Date(Date.now() + 8 * 3600e3).getUTCHours();
+  if (hkHour >= 12) {
+    await settleHk(rows);
+  } else {
+    console.log(`⚠️ 延遲跨咗香港午夜(HK ${hkHour}點),maxmin CSV得新一日凌晨數據,skip香港settle`);
+  }
+
+  await settleAndWriteBias(rows);
+}
+
+async function settleHk(rows) {
   const today = hkToday();
   const res = await fetch(MAXMIN_CSV_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`maxmin CSV ${res.status}`);
@@ -181,13 +291,22 @@ async function runSettle() {
   }
   if (realized === null || Number.isNaN(realized)) throw new Error("攞唔到今日實測最高溫");
 
-  const rows = loadLog();
   let row = rows.find((r) => r.date === today);
   if (!row) { row = { date: today, forecasts: {}, realized: "" }; rows.push(row); }
   row.realized = realized.toFixed(1);
   saveLog(rows);
   console.log(`✅ 已記錄 ${today} 實測最高溫: ${realized.toFixed(1)}°C`);
 
+  try {
+    settleCalib(today, realized);
+  } catch (e) {
+    console.log("⚠️ 校準對答案失敗(唔影響其他):", e.message);
+  }
+}
+
+// 遠程城市settle+寫bias.json——就算香港嗰part被skip都照做
+// (遠程城市結算「當地昨日」用METAR 48hr報文,延遲跨午夜都攞得返正確數據)
+async function settleAndWriteBias(rows) {
   // ---- 遠程城市:結算當地「昨日」+計bias ----
   // 讀返舊bias.json,邊個城市今次fail就保留佢上次嘅值
   let oldBias = {};

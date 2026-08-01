@@ -44,9 +44,31 @@ async function checkWorkflowRuns(problems, notes) {
   notes.push(`過去26hr ${recent.length}個run,${Object.values(failsByName).reduce((a, b) => a + b, 0)}個fail`);
 }
 
+// 一個log檔近兩日有冇「有預測」嘅行——2026-07實戰教訓:settle正常跑緊
+// 但朝早forecast全部錯行settle,行行得realized冇模型欄,bias永遠唔會增長,
+// 齋睇「最新行日期」係驗唔出嘅
+function recentForecastOk(file) {
+  if (!fs.existsSync(file)) return null;
+  const lines = fs.readFileSync(file, "utf-8").trim().split(/\r?\n/).slice(1);
+  const cutoff = Date.now() - 2 * 86400e3;
+  let sawRecent = false;
+  for (const line of lines.slice(-5)) {
+    const cols = line.split(",");
+    if (new Date(cols[0] + "T00:00:00Z").getTime() < cutoff) continue;
+    sawRecent = true;
+    if (cols.slice(1, 7).some((v) => v !== "")) return true; // 近兩日有行有預測
+  }
+  return sawRecent ? false : null; // false=有近行但全冇預測;null=根本冇近行
+}
+
 function checkBiasProgress(problems, cityLines) {
   let bias = {};
   try { bias = JSON.parse(fs.readFileSync("bias.json", "utf-8")); } catch { /* 冇就空 */ }
+
+  if (recentForecastOk("forecast_log.csv") === false) {
+    problems.push("香港近兩日有realized但冇模型預測——朝早forecast班可能錯咗mode/死咗");
+  }
+
   for (const c of CITIES) {
     const cb = bias.cities?.[c];
     const file = `forecast_log_${c}.csv`;
@@ -62,6 +84,8 @@ function checkBiasProgress(problems, cityLines) {
       problems.push(`${c}未有forecast_log檔(daily_log未跑過?改動未merge入main?)`);
     } else if ((Date.now() - new Date(lastDate + "T00:00:00Z")) / 86400e3 > 2.5) {
       problems.push(`${c}嘅log停咗喺${lastDate},bias累積斷咗`);
+    } else if (recentForecastOk(file) === false) {
+      problems.push(`${c}近兩日得realized冇模型預測,bias唔會增長——查朝早forecast班`);
     }
   }
 }

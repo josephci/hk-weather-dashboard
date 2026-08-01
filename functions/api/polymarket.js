@@ -44,9 +44,11 @@ export async function onRequest(context) {
       return json({ error: `city要係: ${Object.keys(CITY_TZ).join("/")}` }, 400);
     }
 
+    // ?day=tomorrow → 聽日market(通常今日已開盤,早期定價最鬆)
+    const dayOffset = url.searchParams.get("day") === "tomorrow" ? 86400e3 : 0;
     const dateStr = new Intl.DateTimeFormat("en-CA", {
       timeZone: CITY_TZ[city], year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    }).format(new Date(Date.now() + dayOffset));
     const [, m, d] = dateStr.split("-").map(Number);
     const slug = `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}`;
 

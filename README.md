@@ -74,6 +74,11 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
   高/中/低;倫敦7月19-21°C係海洋性氣候正常事,唔好用香港直覺估溫度
 - Open-Meteo嘅hourly precipitation=「之前一小時總量」,current hour嗰格
   就係過去1hr
+- ⚠️Cloudflare Workers嘅fetch()預設經edge cache!HKO CSV試過俾佢食住
+  舊版個零鐘(2026-07-25,dashboard「讀數唔更新」)——所有上游fetch一律
+  cache:"no-store"
+- dashboard live讀數都做埋雙水喉:1分鐘CSV(0.1°)滯後>20分鐘就自動轉
+  rhrread(整數,快4分),UI標「rhrread後備」;滯後>30分鐘出⚠️HKO源頭滯後
 
 ## Hosting（Netlify ⇄ Cloudflare Pages兩邊都跑得）
 
@@ -89,6 +94,20 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 點解值得轉:Netlify係credit/月(爆一次鎖成個月,2026-07試過),CF係10萬request/**日**
 (每日reset),dashboard優化後用量~3千/日=CF日限3%,爆極都爆唔到。
 worker.js(警報系統)一直都喺Cloudflare,同一個帳戶。
+
+## 自我校準機制（2026-08加）
+
+三個feedback loop,全部唔使人手維護:
+
+| 機制 | 邊度學 | 用嚟做乜 |
+|---|---|---|
+| bias.json | daily_log每日「模型預測vs實測」 | 修正6模型系統性偏差(HK+4城市) |
+| maxGrowth校準 | history.csv 27日日內軌跡 | 「今日max仲會生長幾多」上限,取代手作估算 |
+| calibration_log.csv | 每朝記機率、晚上對答案 | 可靠度表:「話70%實際中幾多%」 |
+
+⚠️maxGrowth量度嘅係 `finalMax - 當時todayMax`(max仲會生長幾多),
+**唔係** `finalMax - 當時氣溫`——後者喺夜晚會誤讀成「仲可以升5度」
+(其實只係溫度跌咗返),第一版就係咁中招,個表夜晚仲大過朝早先發現。
 
 ## Secrets清單
 

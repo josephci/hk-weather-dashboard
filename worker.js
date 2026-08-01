@@ -64,6 +64,17 @@ async function fetchCsvRow(url) {
   throw new Error(`搵唔到天文台總部行: ${url}`);
 }
 
+// rhrread讀到R(整數,四捨五入) → 真值T ∈ [R-0.5, R+0.5)。
+// 問「R.0關口破咗未」=問 P(T >= R)。淨靠rhrread係50%(區間一半);
+// 但CSV已知今日max做下限(溫度創新高中,T唔會低過佢),可以收窄:
+//   T ∈ [max(R-0.5, csvMax), R+0.5) → P = 0.5 / 區間闊度
+function breakProb(R, csvMax) {
+  const lo = Math.max(R - 0.5, csvMax ?? R - 0.5);
+  const width = (R + 0.5) - lo;
+  if (width <= 0) return 99;
+  return Math.min(99, Math.round((0.5 / width) * 100));
+}
+
 async function fetchRhrread() {
   try {
     const res = await fetch(RHRREAD_URL, { cf: { cacheTtl: 0 } });
@@ -288,10 +299,14 @@ async function runCheck(env) {
     const knownFloor = Math.floor(todayMax);
     const fastAlerted = state.fastAlerted || [];
     if (fastFloor > knownFloor && !fastAlerted.includes(fastFloor)) {
+      // ⚠️rhrread係四捨五入(200樣本驗證:179個吻合round-half-up),
+      // 所以讀到N即係真值喺[N-0.5, N+0.5)——N.0關口只係「有機會」破咗,
+      // 唔係實破。以前寫「大概率已破」係高估咗,呢個係落注訊號要準確。
       events.push(
-        `⚡🚨 <b>快水喉搶先訊號</b>：rhrread現報 ${fast.value}°C（整數，${fast.recordTime?.slice(11, 16) ?? "?"}讀數）\n` +
-        `高過CSV已知今日max ${todayMax.toFixed(1)}°C 嘅整數位 → <b>${fastFloor}.0°C關口大概率已破</b>\n` +
-        `→ CSV要遲~4分鐘先確認，呢一刻市場可能未完全重價，判斷後從速`
+        `⚡ <b>快水喉搶先訊號</b>：rhrread現報 ${fast.value}°C（整數，${fast.recordTime?.slice(11, 16) ?? "?"}讀數）\n` +
+        `rhrread係四捨五入 → 真值喺 ${(fast.value - 0.5).toFixed(1)}–${(fast.value + 0.5).toFixed(1)}° 之間\n` +
+        `<b>${fastFloor}.0°C關口有 ~${breakProb(fast.value, todayMax)}% 機會已破</b>（唔係肯定，CSV已知max ${todayMax.toFixed(1)}°）\n` +
+        `→ CSV要遲~4分鐘先確認，呢一刻市場可能未完全重價，但唔好當實破落重注`
       );
       fastAlerted.push(fastFloor);
       state.fastAlerted = fastAlerted;

@@ -30,6 +30,7 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 | worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
 | daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias(HK+滬京倫巴5城市) |
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
+| backfill_forecasts.js | 手動觸發 | 補「有實測冇預測」嘅爛行(cron bug遺留) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
 | alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv(commit去data branch) |
 | nightly_check.js | GitHub Actions | 每晚22:10健康檢查(Actions fail/bias停滯/main污染)→Telegram |
@@ -55,6 +56,10 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
   (BIAS_URL同scan_cities.js都讀main,唔值得搬)
 - ⚠️歷史bug(2026-07-16修):bucket機率對「86-87°F」兩度一格只計咗第一個數,
   美國°F市場全部兩度一格→模型%以前一直被低估近半,舊edge訊號要重新審視
+- ⚠️sampleDays講過大話(2026-08-01修):computeBias用 `forecasts[m] !== ""`
+  判斷有冇數,但settle新建嘅行係 `undefined`,而 `undefined !== ""` 係true
+  → 每次settle虛報+1日。所以見過「1日數據」但一個預測都冇。
+  一律用 hasVal() 判斷
 - 遠程城市bias(2026-07-16起累積):daily_log每朝記ZSPD/ZBAA/EGLC/LFPB嘅6模型預測
   (forecast_log_{city}.csv),每晚用METAR 48hr報文結算「當地昨日」最高
   (揀昨日因為倫敦嗰邊HK23:45先下晝);儲夠7日bias.json出cities key,
@@ -131,3 +136,21 @@ worker.js(警報系統)一直都喺Cloudflare,同一個帳戶。
 ## 交易警示
 
 模型% vs 市場價差距大,先假設自己錯。惡劣天氣日減注。呢個係決策輔助,唔係財務建議。
+
+## 快水喉(rhrread)捨入特性 — 交易含意
+
+rhrread係**四捨五入**（200樣本驗證：179個吻合round-half-up，101個
+小數≥.5被入上）。即係讀到 `26` 代表真值喺 **[25.5, 26.5)**。
+
+⚠️ 後果：「快水喉搶先破關」訊號**唔係實破**。rhrread啱啱跳上26嗰陣，
+26.0關口只係大約一半機會破咗。用CSV已知max做下限可以收窄：
+
+| rhrread | CSV已知max | 真值區間 | 26.0關口破咗嘅機會 |
+|---|---|---|---|
+| 26 | 25.2 | 25.5–26.5 | 50% |
+| 26 | 25.8 | 25.8–26.5 | 71% |
+| 26 | 25.95 | 25.95–26.5 | 91% |
+
+worker.js/alert.js已經改成報實際百分比，唔再講「大概率已破」。
+`rounding_probe.js` 可以繼續查例外個案（例外集中喺小數.4–.6 = 時間差
+造成，規則本身冇問題；例外散開 = rhrread可能係另一個量度，要重新評估）。

@@ -73,7 +73,7 @@ const CITIES = {
   // ---- 亞太 ----
   "beijing":       { lat: 40.080,  lon: 116.585,  tz: "Asia/Shanghai" },  // ZBAA首都機場(結算站)
   "shanghai":      { lat: 31.143,  lon: 121.805,  tz: "Asia/Shanghai" },  // ZSPD浦東機場(結算站)
-  "shenzhen":      { lat: 22.5431, lon: 114.0579, tz: "Asia/Shanghai" },
+  "shenzhen":      { lat: 22.639,  lon: 113.811,  tz: "Asia/Shanghai" },  // ZGSZ寶安(結算站)
   "guangzhou":     { lat: 23.1291, lon: 113.2644, tz: "Asia/Shanghai" },
   "chengdu":       { lat: 30.5728, lon: 104.0668, tz: "Asia/Shanghai" },
   "chongqing":     { lat: 29.5630, lon: 106.5516, tz: "Asia/Shanghai" },

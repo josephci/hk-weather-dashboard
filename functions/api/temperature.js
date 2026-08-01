@@ -62,7 +62,7 @@ async function fetchMaxMin() {
 }
 
 async function fetchMetar() {
-  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB&format=json", { cache: "no-store" });
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB,ZGSZ&format=json", { cache: "no-store" });
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};

@@ -75,7 +75,7 @@ async function fetchMaxMin() {
 // ⚠️ VHHH做香港平行數據源（機場≠總部，差1-2°C，睇趨勢用）；
 //   ZSPD/ZBAA/EGLC/LFPB就係上海北京倫敦巴黎market嘅結算源本身。
 async function fetchMetar() {
-  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB&format=json");
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH,ZSPD,ZBAA,EGLC,LFPB,ZGSZ&format=json");
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};

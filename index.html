@@ -342,6 +342,7 @@
     <button class="city-tab" data-city="beijing">北京</button>
     <button class="city-tab" data-city="london">倫敦</button>
     <button class="city-tab" data-city="paris">巴黎</button>
+    <button class="city-tab" data-city="shenzhen">深圳</button>
   </div>
 
   <div id="view-hk" style="display:contents;">
@@ -560,6 +561,10 @@ const REMOTE_CITIES = {
               note: "結算源=EGLC METAR；落注前對返market描述" },
   paris:    { name: "巴黎布爾歇機場 (LFPB)", icao: "LFPB", lat: 48.9694, lon: 2.4414, pmCity: "paris", tz: "Europe/Paris",
               note: "結算源=LFPB METAR；落注前對返market描述" },
+  // 深圳:跟上海北京嘅convention用機場METAR。實測(ERA5 61日)寶安比HKO總部
+  // 熱1.22°±0.84°,93%日子較熱——但只有8%日子落同一個整數bucket,唔可以當同一注
+  shenzhen: { name: "深圳寶安機場 (ZGSZ)", icao: "ZGSZ", lat: 22.639, lon: 113.811, pmCity: "shenzhen", tz: "Asia/Shanghai",
+              note: "結算源=ZGSZ METAR（跟滬京convention推斷）；落注前對返market描述" },
 };
 let currentCity = "hk";
 

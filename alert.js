@@ -60,6 +60,15 @@ async function fetchCsvRow(url, expectCols) {
 // ---------- 快水喉：rhrread（整點讀數~04分出，早CSV約4分鐘；整數精度） ----------
 const RHRREAD_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc";
 
+// rhrread讀到R(整數,四捨五入) → 真值T ∈ [R-0.5, R+0.5)。
+// P(R.0關口已破) = P(T >= R);CSV已知max做下限可以收窄個區間
+function breakProb(R, csvMax) {
+  const lo = Math.max(R - 0.5, csvMax ?? R - 0.5);
+  const width = (R + 0.5) - lo;
+  if (width <= 0) return 99;
+  return Math.min(99, Math.round((0.5 / width) * 100));
+}
+
 async function fetchRhrread() {
   try {
     const res = await fetch(RHRREAD_URL, { cache: "no-store" });
@@ -300,9 +309,11 @@ async function main() {
     const knownFloor = Math.floor(todayMax);
     const fastAlerted = state.fastAlerted || [];
     if (fastFloor > knownFloor && !fastAlerted.includes(fastFloor)) {
+      // ⚠️rhrread係四捨五入 → 讀到N即真值喺[N-0.5,N+0.5),N.0關口只係「有機會」破
       events.push(
-        `⚡🚨 <b>快水喉搶先訊號</b>：rhrread現報 ${fast.value}°C（整數，${fast.recordTime?.slice(11, 16) ?? "?"}讀數）\n` +
-        `高過CSV已知今日max ${todayMax.toFixed(1)}°C 嘅整數位 → <b>${fastFloor}.0°C關口大概率已破</b>\n` +
+        `⚡ <b>快水喉搶先訊號</b>：rhrread現報 ${fast.value}°C（整數，${fast.recordTime?.slice(11, 16) ?? "?"}讀數）\n` +
+        `rhrread係四捨五入 → 真值喺 ${(fast.value - 0.5).toFixed(1)}–${(fast.value + 0.5).toFixed(1)}° 之間\n` +
+        `<b>${fastFloor}.0°C關口有 ~${breakProb(fast.value, todayMax)}% 機會已破</b>（唔係肯定，CSV已知max ${todayMax.toFixed(1)}°）\n` +
         `→ CSV要遲~4分鐘先確認，呢一刻市場可能未完全重價，判斷後從速`
       );
       fastAlerted.push(fastFloor);

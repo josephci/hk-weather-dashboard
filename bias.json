@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T15:38:11.935Z",
+  "generatedAt": "2026-08-01T23:55:36.781Z",
   "sampleDays": 52,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {

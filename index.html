@@ -416,6 +416,15 @@
   </section>
 
   <section class="ladder-panel">
+    <div class="panel-title">明日Edge：模型 vs 市場</div>
+    <div id="edgeListTmr"><div class="edge-row"><span class="edge-flat">載入中…</span></div></div>
+    <div style="margin-top:10px;"><a class="market-link" id="marketLinkTmr" href="#" target="_blank" rel="noopener"></a></div>
+    <div class="station-line" style="margin-top:6px;">
+      <span style="font-size:11px;color:var(--muted);">聽日盤定價通常最鬆(市場未消化模型),但一晚變數大——分歧⚠嗰陣減注</span>
+    </div>
+  </section>
+
+  <section class="ladder-panel">
     <div class="panel-title">今日溫度走勢（history.csv）</div>
     <svg class="trend-svg" id="trendSvg" viewBox="0 0 360 140" preserveAspectRatio="none"></svg>
     <div class="station-line" style="margin-top:4px;"><span id="trendNote" style="font-size:12px;color:var(--muted);">載入中…</span></div>
@@ -425,6 +434,17 @@
     <div class="panel-title" id="edgeTitleHk">今日Edge：模型 vs 市場</div>
     <div id="edgeListHk"><div class="edge-row"><span class="edge-flat">載入中…</span></div></div>
     <div style="margin-top:10px;"><a class="market-link" id="marketLinkHk" href="#" target="_blank"></a></div>
+  </section>
+
+  <section class="ladder-panel">
+    <div class="panel-title">
+      <span>🎯 模型可靠度（自己對自己數）</span>
+      <span class="flag" id="calibSamples"></span>
+    </div>
+    <div id="calibList"><div class="edge-row"><span class="edge-flat">載入中…</span></div></div>
+    <div class="station-line" style="margin-top:8px;">
+      <span style="font-size:11px;color:var(--muted);">每朝記低機率、晚上對答案。「講70%實際65%」=大致可信;差距大就唔好照個%落注</span>
+    </div>
   </section>
 
   <section class="ladder-panel">
@@ -526,6 +546,7 @@ const FORECAST_POLL_MS = 10 * 60_000;
 const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/bias.json";
 // history.csv依家住喺data branch（temp-alerts workflow每5分鐘寫嗰邊,main唔再有log commit）
 const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/data/history.csv";
+const CALIB_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/calibration_log.csv";
 const PM_ENDPOINT = "/api/polymarket";
 
 // 非香港城市設定（結算站=機場座標）
@@ -681,17 +702,58 @@ let trendPts = [];           // 今日採樣點（由pollTrend更新,俾1小時�
 
 // 剩餘升溫潛力(°C):由而家去到今日高峰(通常14-15時)最多仲可以升幾多
 // 用香港夏天晴天嘅典型升溫速率做上限——落雨日實際會更低,呢個係保守上限
-function risePotential(h) {
-  if (h < 9) return 6.0;
-  if (h < 10) return 5.0;
-  if (h < 11) return 4.5;
-  if (h < 12) return 3.5;
-  if (h < 13) return 2.5;
-  if (h < 14) return 1.6;
+// 手作fallback:「t點嗰陣,今日max仲會生長幾多」嘅保守估算,冇歷史數據時用
+function maxGrowthFallback(h) {
+  if (h < 9) return 5.5;
+  if (h < 10) return 4.5;
+  if (h < 11) return 3.5;
+  if (h < 12) return 3.0;
+  if (h < 13) return 2.0;
+  if (h < 14) return 1.2;
   if (h < 15) return 0.9;
-  if (h < 16) return 0.4;
-  if (h < 17) return 0.2;
-  return 0;
+  if (h < 16) return 0.6;
+  if (h < 17) return 0.4;
+  return 0.1;
+}
+
+// 由history.csv學返嘅「今日max仲會生長幾多」(pollTrend計)
+// ⚠️量度嘅係 finalMax - 當時todayMax,唔係 finalMax - 當時氣溫——
+// 後者喺夜晚會誤讀成「仲可以升5度」(其實只係溫度跌咗返),試過中招
+let maxGrowthCalib = null;
+let calibDays = 0; // 用咗幾多日歷史學(UI顯示用)
+
+// 做上限要保守,所以用p90(「已經算好高」嘅生長)而唔係中位數;
+// 樣本太少(<5)嘅鐘數唔信,跌返fallback
+function maxGrowth(h) {
+  const c = maxGrowthCalib?.[h];
+  if (c && c.n >= 5) return c.p90;
+  return maxGrowthFallback(h);
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+// 由history.csv全部已完成日子,學每個鐘嘅max生長分佈
+// 落雨日/陰天日嘅真實模式全部計埋入去,唔使自己估
+function buildMaxGrowthCalibration(rowsByDay) {
+  const byHour = {};
+  for (const day of Object.values(rowsByDay)) {
+    if (day.finalMax === null) continue;
+    for (const r of day.rows) {
+      if (r.tm === null) continue;
+      (byHour[Math.floor(r.mins / 60)] ||= []).push(Math.max(0, day.finalMax - r.tm));
+    }
+  }
+  const out = {};
+  for (const [h, arr] of Object.entries(byHour)) {
+    arr.sort((a, b) => a - b);
+    out[h] = { p50: quantile(arr, 0.5), p90: quantile(arr, 0.9), n: arr.length };
+  }
+  return out;
 }
 
 // bias.json共用cache：pollForecast同pollTomorrow以前每10分鐘各自fetch一次，
@@ -810,8 +872,33 @@ async function pollTomorrow() {
       `;
       listEl.appendChild(item);
     });
+
+    // 聽日market嘅edge:聽日盤今日已開,早期定價通常最鬆
+    const probs = {};
+    for (let b = lo - 3; b < hi + 3; b++) {
+      probs[b] = normalCdf(b+1, mean, std) - normalCdf(b, mean, std);
+    }
+    pollEdgeTomorrow(probs);
   } catch (e) {
     document.getElementById('tomorrowTitle').textContent = '明日預測暫時攞唔到：' + e.message;
+  }
+}
+
+async function pollEdgeTomorrow(probs) {
+  const el = document.getElementById('edgeListTmr');
+  try {
+    const res = await fetchRetry(`${PM_ENDPOINT}?city=hong-kong&day=tomorrow`, { cache: 'no-store' });
+    const pm = await res.json();
+    const link = document.getElementById('marketLinkTmr');
+    if (!pm.found) {
+      el.innerHTML = '<div class="edge-row"><span class="edge-flat">聽日market未開(通常當日下晝先開盤)</span></div>';
+      link.textContent = '';
+      return;
+    }
+    renderEdgeList('edgeListTmr', pm.buckets, probs);
+    link.href = pm.url; link.textContent = '👉 ' + pm.title;
+  } catch (e) {
+    el.innerHTML = `<div class="edge-row"><span class="edge-flat">聽日Edge攞唔到: ${esc(e.message)}</span></div>`;
   }
 }
 
@@ -874,11 +961,11 @@ function computeBuckets() {
     buckets.push({ range: `${b}–${b+1}°`, low: b, prob: p });
   }
 
-  // 軌跡上限：最終max唔可能超過「現時溫度+剩餘時間最大合理升幅」
-  // 例:10:30現時25.8° → 上限~30.3° → 31/32bucket砍到近零
+  // 軌跡上限：今日max最多仲會生長幾多(由history.csv學返p90,冇數據用fallback)
+  // 例:10:30已實現27.8° + 呢個鐘p90生長4.4° → 上限~32.2° → 33°以上砍到近零
   let capped = false;
-  if (conditioned && currentRealized !== null) {
-    const cap = Math.max(currentRealized + risePotential(h), rm); // 唔可以低過已實現max
+  if (conditioned) {
+    const cap = rm + maxGrowth(h);
     for (const b of buckets) {
       if (b.low > Math.floor(cap)) { b.prob *= 0.03; capped = true; } // 超上限嘅格留3%殘餘(唔敢講死)
     }
@@ -911,7 +998,7 @@ function renderForecast() {
   const titleEl = document.querySelector('.ladder-panel .panel-title');
   if (titleEl) {
     titleEl.textContent = conditioned
-      ? `今日高溫機率（實測${todayMaxRealized.toFixed(1)}°+軌跡${rainAdjusted ? '+🌧雨天' : ''}修正）`
+      ? `今日高溫機率（實測${todayMaxRealized.toFixed(1)}°+軌跡${calibDays ? `[${calibDays}日校準]` : ''}${rainAdjusted ? '+🌧雨天' : ''}修正）`
       : '今日高溫機率（6模型）';
   }
 
@@ -954,23 +1041,35 @@ async function pollTrend() {
 
     // 香港「今日」日期
     const today = new Date(Date.now() + 8*3600*1000).toISOString().slice(0, 10);
-    const pts = [];
-    let officialMax = null; // 由todayMax欄攞真正官方今日最高(唔會俾採樣疏漏走)
+
+    // 一次過parse晒全部日子:今日畫圖用,歷史日子攞嚟學max生長校準(零額外request)
+    const byDay = {};
     for (const line of lines) {
       const cols = line.split(',');
       const recordTime = cols[0], current = cols[1], tMax = cols[2];
-      if (recordTime.startsWith(today)) {
-        if (current) {
-          const mins = parseInt(recordTime.slice(11,13),10)*60 + parseInt(recordTime.slice(14,16),10);
-          const v = parseFloat(current);
-          if (!Number.isNaN(v)) pts.push({ mins, v });
-        }
-        if (tMax) {
-          const mv = parseFloat(tMax);
-          if (!Number.isNaN(mv) && (officialMax === null || mv > officialMax)) officialMax = mv;
-        }
+      if (!recordTime || recordTime.length < 16) continue;
+      const day = recordTime.slice(0, 10);
+      const d = (byDay[day] ||= { pts: [], rows: [], finalMax: null });
+      const mins = parseInt(recordTime.slice(11,13),10)*60 + parseInt(recordTime.slice(14,16),10);
+      const v = current ? parseFloat(current) : NaN;
+      if (!Number.isNaN(v)) d.pts.push({ mins, v });
+      const mv = tMax ? parseFloat(tMax) : NaN;
+      if (!Number.isNaN(mv)) {
+        d.rows.push({ mins, tm: mv });
+        if (d.finalMax === null || mv > d.finalMax) d.finalMax = mv;
       }
     }
+
+    // 學校準:淨用「已完成」嘅日子(唔計今日,今日個max仲未定)
+    const pastDays = Object.fromEntries(Object.entries(byDay).filter(([k]) => k !== today));
+    if (Object.keys(pastDays).length >= 5) {
+      maxGrowthCalib = buildMaxGrowthCalibration(pastDays);
+      calibDays = Object.keys(pastDays).length;
+      renderForecast(); // 用新校準重算階梯
+    }
+
+    const pts = (byDay[today]?.pts ?? []).sort((a, b) => a.mins - b.mins);
+    let officialMax = byDay[today]?.finalMax ?? null;
     // 用dashboard已知嘅實測max做最後保險(佢嚟自maxmin CSV,最權威)
     if (todayMaxRealized !== null && (officialMax === null || todayMaxRealized > officialMax)) {
       officialMax = todayMaxRealized;
@@ -999,6 +1098,50 @@ async function pollTrend() {
     trendPts = pts;
   } catch (e) {
     document.getElementById('trendNote').textContent = '走勢圖攞唔到：' + e.message;
+  }
+}
+
+// ============================================================
+// 🎯 模型可靠度:讀calibration_log.csv,答「話X%嗰啲實際中幾多%」
+// 呢個係全個系統唯一嘅feedback loop——冇佢,所有edge都係憑感覺信
+// ============================================================
+async function pollCalibration() {
+  const el = document.getElementById('calibList');
+  try {
+    const res = await fetch(CALIB_URL + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('calib ' + res.status);
+    const rows = (await res.text()).trim().split(/\r?\n/).slice(1)
+      .map(l => { const [date, bucket, prob, hit] = l.split(','); return { date, prob: parseFloat(prob), hit }; })
+      .filter(r => r.hit === '1' || r.hit === '0');
+
+    const days = new Set(rows.map(r => r.date)).size;
+    document.getElementById('calibSamples').textContent = days ? `${days}日 · ${rows.length}個樣本` : '';
+
+    if (rows.length < 20) {
+      el.innerHTML = `<div class="edge-row"><span class="edge-flat">累積緊(${rows.length}/20個樣本先出表)</span></div>`;
+      return;
+    }
+    const bands = [[0,.1],[.1,.25],[.25,.5],[.5,.75],[.75,1.01]];
+    el.innerHTML = '';
+    for (const [lo, hi] of bands) {
+      const inBand = rows.filter(r => r.prob >= lo && r.prob < hi);
+      if (inBand.length < 3) continue;
+      const said = inBand.reduce((a,r)=>a+r.prob,0) / inBand.length;
+      const actual = inBand.filter(r => r.hit === '1').length / inBand.length;
+      const gap = actual - said;
+      const cls = Math.abs(gap) < 0.08 ? 'edge-flat' : (gap > 0 ? 'edge-pos' : 'edge-neg');
+      const verdict = Math.abs(gap) < 0.08 ? '✓準' : gap > 0 ? '↑過份保守' : '↓過份自信';
+      const row = document.createElement('div');
+      row.className = 'edge-row';
+      row.innerHTML =
+        `<span class="edge-label">${(lo*100).toFixed(0)}-${Math.min(hi*100,100).toFixed(0)}%</span>` +
+        `<span class="edge-nums">講${(said*100).toFixed(0)}% / 實際${(actual*100).toFixed(0)}% (n=${inBand.length})</span>` +
+        `<span class="edge-val ${cls}">${verdict}</span>`;
+      el.appendChild(row);
+    }
+    if (!el.children.length) el.innerHTML = '<div class="edge-row"><span class="edge-flat">每個機率區間樣本都未夠3個</span></div>';
+  } catch (e) {
+    el.innerHTML = `<div class="edge-row"><span class="edge-flat">可靠度數據未有(要等daily_log累積)</span></div>`;
   }
 }
 
@@ -1588,7 +1731,7 @@ function tickClock() {
 setInterval(tickClock, 1000); tickClock();
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
-  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk();
+  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk(); pollCalibration();
   if (REMOTE_CITIES[currentCity]) pollCnCity();
 });
 
@@ -1603,6 +1746,8 @@ pollLive();
 pollForecast();
 pollTomorrow();
 pollTrend();
+pollCalibration();
+setInterval(whenVisible(pollCalibration), 60 * 60_000); // 一日先更新一次,一個鐘睇一次夠曬
 setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
 setInterval(whenVisible(pollLive), LIVE_POLL_MS);
 setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);

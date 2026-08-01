@@ -95,6 +95,20 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 (每日reset),dashboard優化後用量~3千/日=CF日限3%,爆極都爆唔到。
 worker.js(警報系統)一直都喺Cloudflare,同一個帳戶。
 
+## 自我校準機制（2026-08加）
+
+三個feedback loop,全部唔使人手維護:
+
+| 機制 | 邊度學 | 用嚟做乜 |
+|---|---|---|
+| bias.json | daily_log每日「模型預測vs實測」 | 修正6模型系統性偏差(HK+4城市) |
+| maxGrowth校準 | history.csv 27日日內軌跡 | 「今日max仲會生長幾多」上限,取代手作估算 |
+| calibration_log.csv | 每朝記機率、晚上對答案 | 可靠度表:「話70%實際中幾多%」 |
+
+⚠️maxGrowth量度嘅係 `finalMax - 當時todayMax`(max仲會生長幾多),
+**唔係** `finalMax - 當時氣溫`——後者喺夜晚會誤讀成「仲可以升5度」
+(其實只係溫度跌咗返),第一版就係咁中招,個表夜晚仲大過朝早先發現。
+
 ## Secrets清單
 
 - GitHub: TG_BOT_TOKEN, TG_CHAT_ID

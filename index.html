@@ -398,6 +398,7 @@
 
   <section class="ladder-panel">
     <div class="panel-title">階梯建議（機率最高嘅3個相鄰區間）</div>
+    <div id="modelBeatenWarn" style="display:none;background:rgba(217,115,78,0.12);border:1px solid rgba(217,115,78,0.35);color:var(--warm);border-radius:10px;padding:9px 12px;font-size:12px;line-height:1.5;margin-bottom:12px;"></div>
     <div id="ladderList">
       <div class="ladder-item"><span class="ladder-range">--</span><div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:0%"></div></div><span class="ladder-prob">--%</span></div>
     </div>
@@ -751,7 +752,26 @@ function buildMaxGrowthCalibration(rowsByDay) {
   const out = {};
   for (const [h, arr] of Object.entries(byHour)) {
     arr.sort((a, b) => a - b);
-    out[h] = { p50: quantile(arr, 0.5), p90: quantile(arr, 0.9), n: arr.length };
+    out[h] = { p50: quantile(arr, 0.5), p90: quantile(arr, 0.9), n: arr.length, samples: arr };
+  }
+  return out;
+}
+
+// 純軌跡分佈:P(今日最終max喺bucket b) = P(生長量落喺 [b-rm, b+1-rm])
+// 完全唔用模型——只用「歷史上呢個鐘之後,max實際生長咗幾多」嘅經驗分佈。
+// 模型今日射失嗰陣,呢個就係唯一可信嘅嘢。
+function growthBuckets(rm, h, lo, hi) {
+  const c = maxGrowthCalib?.[h];
+  if (!c || c.n < 8) return null; // 樣本太少唔夠砌分佈
+  const s = c.samples, n = s.length;
+  const cdf = (x) => { // 經驗CDF:幾多成樣本 <= x
+    let k = 0;
+    while (k < n && s[k] <= x) k++;
+    return k / n;
+  };
+  const out = {};
+  for (let b = lo; b < hi; b++) {
+    out[b] = Math.max(0, cdf(b + 1 - rm) - cdf(b - rm));
   }
   return out;
 }
@@ -934,8 +954,15 @@ function computeBuckets() {
   // 大過模型預期時,模型mean會偏高(README 2026-07-05嘅5σ教訓反向版)。
   // 做法係將成個分佈移低+擴闊(均勻砍upside再歸一係no-op,比例唔會變)。
   // 兩個訊號:①rhrread實測過去1hr雨(油尖旺) ②模型高峰時段(12-16)預測雨。
+  // ⚠️模型已被超越:實測max已經追過模型平均,而高峰時段仲未完。
+  // 呢個係硬證據——今日個模型低估咗。噉就唔應該再信佢向下修,
+  // 反而要認低頭:將「已證實嘅誤差」當額外方差放闊個分佈。
+  // (唔加呢個判斷嘅話:11:53實測28.8°/模型28.4°,個階梯會話28°有83%,
+  //  但其實仲有2-3個鐘高峰升溫未行,83%係假信心)
+  const modelBeaten = conditioned && rm >= mean && h < 16;
+
   let rainShift = 0;
-  if (conditioned) {
+  if (conditioned && !modelBeaten) { // 模型已被超越就唔好再向下壓,錯上加錯
     const mmNow = rainNow?.localMm ?? null;
     if (mmNow !== null && mmNow >= 0.5) {
       rainShift = mmNow >= 5 ? 1.5 : mmNow >= 2 ? 1.0 : 0.6; // 雨越大壓得越低
@@ -947,7 +974,9 @@ function computeBuckets() {
   }
   const rainAdjusted = rainShift > 0;
   const effMean = mean - rainShift;
-  const effStd = rainAdjusted ? std * 1.3 : std; // 雨日不確定性大啲,分佈擴闊
+  let effStd = rainAdjusted ? std * 1.3 : std; // 雨日不確定性大啲,分佈擴闊
+  // 已證實誤差當額外方差:模型被超越得越犀利,個分佈就越唔可信、越要闊
+  if (modelBeaten) effStd = Math.sqrt(effStd ** 2 + (rm - mean) ** 2);
 
   const buckets = [];
   for (let b = lo; b < hi; b++) {
@@ -971,11 +1000,32 @@ function computeBuckets() {
     }
   }
 
+  // 模型射失嗰陣,溝返個純軌跡分佈入去。
+  // 點解要溝:條件化會將「模型話低過實測」嘅機率全部塞入實測嗰格,
+  // 模型錯得越犀利,嗰格個%就越高——完全係假信心(場景測試:模型錯2.1°
+  // 竟然畀到93%)。純軌跡分佈唔理模型,淨係問「歷史上呢個鐘之後仲會升幾多」。
+  // 溝嘅比重跟模型錯幾多:錯1°→50%、錯2°→67%、錯3°→75%
+  let blended = false;
+  if (modelBeaten) {
+    const gb = growthBuckets(rm, h, lo, hi);
+    if (gb) {
+      const err = rm - mean;
+      const w = err / (err + 1); // 模型錯得越犀利,越信軌跡
+      const gTotal = Object.values(gb).reduce((a, b) => a + b, 0);
+      if (gTotal > 0) {
+        for (const b of buckets) {
+          b.prob = (1 - w) * b.prob + w * ((gb[b.low] ?? 0) / gTotal);
+        }
+        blended = true;
+      }
+    }
+  }
+
   // 條件化之後重新歸一（令總和=100%）
   const total = buckets.reduce((a,b)=>a+b.prob,0);
   if (total > 0) buckets.forEach(b => b.prob = b.prob/total);
 
-  return { buckets, conditioned, capped, rainAdjusted };
+  return { buckets, conditioned, capped, rainAdjusted, modelBeaten, blended };
 }
 
 function renderForecast() {
@@ -991,7 +1041,7 @@ function renderForecast() {
   const flagEl = document.getElementById('spreadFlag');
   flagEl.textContent = spread >= 1 ? '⚠ 分歧較大' : '';
 
-  const { buckets, conditioned, rainAdjusted } = computeBuckets();
+  const { buckets, conditioned, rainAdjusted, modelBeaten } = computeBuckets();
   if (buckets.length === 0) return;
 
   // 標題提示：已條件化（結合已實現高溫），有雨天修正就標明
@@ -1000,6 +1050,18 @@ function renderForecast() {
     titleEl.textContent = conditioned
       ? `今日高溫機率（實測${todayMaxRealized.toFixed(1)}°+軌跡${calibDays ? `[${calibDays}日校準]` : ''}${rainAdjusted ? '+🌧雨天' : ''}修正）`
       : '今日高溫機率（6模型）';
+  }
+
+  // 模型已被超越:呢個係今日最重要嘅交易訊號,唔可以匿埋喺標題度
+  const beatenEl = document.getElementById('modelBeatenWarn');
+  if (beatenEl) {
+    if (modelBeaten) {
+      beatenEl.style.display = 'block';
+      beatenEl.textContent = `⚠️ 實測${todayMaxRealized.toFixed(1)}°已經高過模型平均${forecastState.mean.toFixed(1)}°,而高峰時段未完` +
+        ` → 今日模型低估緊,下面啲%已放闊,高位bucket唔好睇死`;
+    } else {
+      beatenEl.style.display = 'none';
+    }
   }
 
   // Polymarket格式：逐格獨立顯示，所有>=2%嘅bucket

@@ -10,6 +10,7 @@ const CITY_TZ = {
   "beijing": "Asia/Shanghai",
   "london": "Europe/London",
   "paris": "Europe/Paris",
+  "shenzhen": "Asia/Shanghai",
 };
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 

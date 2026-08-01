@@ -33,6 +33,7 @@ const TARGETS = {
   beijing:  { file: "forecast_log_beijing.csv",  lat: 40.080,  lon: 116.585,  tz: "Asia/Shanghai",  decimals: 1 },
   london:   { file: "forecast_log_london.csv",   lat: 51.505,  lon: 0.055,    tz: "Europe/London",  decimals: 1 },
   paris:    { file: "forecast_log_paris.csv",    lat: 48.9694, lon: 2.4414,   tz: "Europe/Paris",   decimals: 1 },
+  shenzhen: { file: "forecast_log_shenzhen.csv", lat: 22.639,  lon: 113.811,  tz: "Asia/Shanghai",  decimals: 1 },
 };
 
 function hasVal(v) { return v !== undefined && v !== null && v !== ""; }

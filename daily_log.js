@@ -41,6 +41,7 @@ const REMOTE_CITIES = {
   beijing:  { icao: "ZBAA", lat: 40.080,  lon: 116.585, tz: "Asia/Shanghai" },
   london:   { icao: "EGLC", lat: 51.505,  lon: 0.055,   tz: "Europe/London" }, // 倫敦城市機場(結算站)
   paris:    { icao: "LFPB", lat: 48.9694, lon: 2.4414,  tz: "Europe/Paris" },  // 巴黎布爾歇(結算站)
+  shenzhen: { icao: "ZGSZ", lat: 22.639,  lon: 113.811, tz: "Asia/Shanghai" }, // 深圳寶安(跟滬京convention)
 };
 
 function hkToday() {

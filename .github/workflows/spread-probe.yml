@@ -1,0 +1,34 @@
+name: Spread Probe
+
+# 量兩個地點嘅每日最高溫實際差幾多(例如香港vs深圳),
+# 答「兩邊market定價唔同係咪合理」。純分析,唔會改任何檔。
+on:
+  workflow_dispatch:
+    inputs:
+      place_a:
+        description: "地點A"
+        type: choice
+        default: "hk"
+        options: ["hk", "hk-airport", "shenzhen", "shenzhen-airport", "guangzhou"]
+      place_b:
+        description: "地點B(同A比)"
+        type: choice
+        default: "shenzhen"
+        options: ["shenzhen", "shenzhen-airport", "guangzhou", "hk", "hk-airport"]
+      days:
+        description: "睇返幾多日"
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 量度溫差
+        run: node spread_probe.js --a=${{ inputs.place_a }} --b=${{ inputs.place_b }} --days=${{ inputs.days }}

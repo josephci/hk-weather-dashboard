@@ -30,6 +30,7 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 | worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
 | daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias(HK+滬京倫巴5城市) |
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
+| backfill_forecasts.js | 手動觸發 | 補「有實測冇預測」嘅爛行(cron bug遺留) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
 | alert.js | GitHub Actions(後備) | 同worker邏輯,兼記history.csv(commit去data branch) |
 | nightly_check.js | GitHub Actions | 每晚22:10健康檢查(Actions fail/bias停滯/main污染)→Telegram |
@@ -55,6 +56,10 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
   (BIAS_URL同scan_cities.js都讀main,唔值得搬)
 - ⚠️歷史bug(2026-07-16修):bucket機率對「86-87°F」兩度一格只計咗第一個數,
   美國°F市場全部兩度一格→模型%以前一直被低估近半,舊edge訊號要重新審視
+- ⚠️sampleDays講過大話(2026-08-01修):computeBias用 `forecasts[m] !== ""`
+  判斷有冇數,但settle新建嘅行係 `undefined`,而 `undefined !== ""` 係true
+  → 每次settle虛報+1日。所以見過「1日數據」但一個預測都冇。
+  一律用 hasVal() 判斷
 - 遠程城市bias(2026-07-16起累積):daily_log每朝記ZSPD/ZBAA/EGLC/LFPB嘅6模型預測
   (forecast_log_{city}.csv),每晚用METAR 48hr報文結算「當地昨日」最高
   (揀昨日因為倫敦嗰邊HK23:45先下晝);儲夠7日bias.json出cities key,

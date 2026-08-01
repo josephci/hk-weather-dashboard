@@ -182,13 +182,18 @@ function saveLog(rows, file = FORECAST_LOG) {
   fs.writeFileSync(file, lines.join("\n") + "\n");
 }
 
+// 一格有冇真數:空字串同undefined(新建行)都唔算
+// ⚠️以前寫 forecasts[m] !== "" ,新建行係undefined會當成有數,
+// sampleDays每次settle虛報+1,搞到「1日數據」但其實一個預測都冇
+function hasVal(v) { return v !== undefined && v !== null && v !== ""; }
+
 // 由已完成記錄計bias(所有城市共用同一條公式)
 function computeBias(rows) {
-  const complete = rows.filter((r) => r.realized !== "" && MODELS.some((m) => r.forecasts[m] !== ""));
+  const complete = rows.filter((r) => hasVal(r.realized) && MODELS.some((m) => hasVal(r.forecasts[m])));
   const biasMax = {};
   for (const m of MODELS) {
     const diffs = complete
-      .filter((r) => r.forecasts[m] !== "")
+      .filter((r) => hasVal(r.forecasts[m]))
       .map((r) => parseFloat(r.realized) - parseFloat(r.forecasts[m]))
       .filter((d) => !Number.isNaN(d));
     if (diffs.length >= MIN_SAMPLES) {

@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: bias-data # 同backfill爭同一批檔,唔好撞
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest

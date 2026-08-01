@@ -1,0 +1,40 @@
+name: Backfill Missing Forecasts
+
+# 補返「有實測但冇模型預測」嘅行(2026-07嗰次cron bug整爛咗嘅數據)。
+# 手動觸發,補完就唔使再跑。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "淨係睇會改乜,唔寫檔"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bias-data # 同daily-bias爭同一批檔,唔好撞
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 補回模型預測
+        run: node backfill_forecasts.js ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Commit結果
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          git add forecast_log*.csv bias.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: backfill missing model forecasts [skip ci]"
+          git push

@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-08-01T23:55:36.781Z",
-  "sampleDays": 52,
-  "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
+  "generatedAt": "2026-08-02T15:18:38.892Z",
+  "sampleDays": 53,
+  "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
-    "gfs_seamless": 0.24,
+    "gfs_seamless": 0.25,
     "ecmwf_ifs025": -0.18,
-    "icon_seamless": 0.27,
-    "ukmo_seamless": -0.96,
-    "gem_seamless": -0.1,
-    "jma_seamless": -0.24
+    "icon_seamless": 0.28,
+    "ukmo_seamless": -0.93,
+    "gem_seamless": -0.13,
+    "jma_seamless": -0.23
   },
   "min": {},
   "cities": {
@@ -55,6 +55,10 @@
         "gem_seamless": 0.59,
         "jma_seamless": 1.55
       }
+    },
+    "shenzhen": {
+      "sampleDays": 0,
+      "max": {}
     }
   }
 }

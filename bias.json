@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-03T16:40:05.359Z",
+  "generatedAt": "2026-08-04T16:21:31.296Z",
   "sampleDays": 53,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
@@ -13,51 +13,51 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 15,
+      "sampleDays": 16,
       "max": {
-        "gfs_seamless": 2.07,
-        "ecmwf_ifs025": 0.65,
-        "icon_seamless": 1.24,
-        "ukmo_seamless": 0.54,
-        "gem_seamless": 2.15,
-        "jma_seamless": 3.58
+        "gfs_seamless": 2.06,
+        "ecmwf_ifs025": 0.63,
+        "icon_seamless": 1.22,
+        "ukmo_seamless": 0.6,
+        "gem_seamless": 2.13,
+        "jma_seamless": 3.49
       }
     },
     "beijing": {
-      "sampleDays": 15,
+      "sampleDays": 16,
       "max": {
-        "gfs_seamless": -0.69,
-        "ecmwf_ifs025": 1.09,
-        "icon_seamless": 1.53,
-        "ukmo_seamless": 1.25,
-        "gem_seamless": 0.75,
-        "jma_seamless": 0.97
+        "gfs_seamless": -0.62,
+        "ecmwf_ifs025": 1.15,
+        "icon_seamless": 1.55,
+        "ukmo_seamless": 1.16,
+        "gem_seamless": 0.77,
+        "jma_seamless": 0.98
       }
     },
     "london": {
-      "sampleDays": 16,
+      "sampleDays": 17,
       "max": {
-        "gfs_seamless": -0.88,
-        "ecmwf_ifs025": -0.31,
-        "icon_seamless": 0.04,
-        "ukmo_seamless": -0.35,
-        "gem_seamless": 0.35,
-        "jma_seamless": 0.96
+        "gfs_seamless": -0.94,
+        "ecmwf_ifs025": -0.37,
+        "icon_seamless": 0,
+        "ukmo_seamless": -0.42,
+        "gem_seamless": 0.3,
+        "jma_seamless": 0.81
       }
     },
     "paris": {
-      "sampleDays": 16,
+      "sampleDays": 17,
       "max": {
-        "gfs_seamless": -0.64,
-        "ecmwf_ifs025": 1.25,
-        "icon_seamless": 0.28,
-        "ukmo_seamless": 0.06,
-        "gem_seamless": 0.53,
-        "jma_seamless": 1.52
+        "gfs_seamless": -0.52,
+        "ecmwf_ifs025": 1.24,
+        "icon_seamless": 0.24,
+        "ukmo_seamless": -0.04,
+        "gem_seamless": 0.49,
+        "jma_seamless": 1.61
       }
     },
     "shenzhen": {
-      "sampleDays": 1,
+      "sampleDays": 2,
       "max": {}
     }
   }

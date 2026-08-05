@@ -14,6 +14,9 @@
  *   node backfill_forecasts.js            # 補香港+4個城市
  *   node backfill_forecasts.js --dry-run  # 淨睇會改乜,唔寫檔
  *
+ * 順便補香港「有預測冇realized」嘅行(settle班俾cron延遲skip咗嗰啲),
+ * 用HKO CLMMAXT官方氣候API。
+ *
  * 只會填空格,唔會覆蓋已有數據。
  * ------------------------------------------------------------
  */
@@ -89,6 +92,49 @@ function computeBias(rows) {
   return { sampleDays: complete.length, max };
 }
 
+
+// 香港官方每日最高溫(CLMMAXT氣候API,有小數位)——補settle班漏咗嘅日子。
+// settle靠嘅maxmin CSV只有「今日至今」,錯過咗就攞唔返;呢個API有歷史。
+async function fetchHkRealized(years) {
+  const map = {};
+  for (const year of years) {
+    const url = `https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO&year=${year}`;
+    const res = await fetch(url);
+    if (!res.ok) { console.warn(`  ⚠️ CLMMAXT ${year}: HTTP ${res.status}`); continue; }
+    for (const row of (await res.json()).data ?? []) {
+      const [y, m, d, v] = row;
+      const val = parseFloat(v);
+      if (y && m && d && !Number.isNaN(val)) {
+        map[`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`] = val;
+      }
+    }
+  }
+  return map;
+}
+
+// 補香港「有預測冇realized」嘅行
+async function backfillHkRealized(dryRun) {
+  const cfg = TARGETS._hk;
+  const rows = loadLog(cfg.file);
+  if (!rows) return 0;
+  const gaps = rows.filter((r) => !hasVal(r.realized) && MODELS.some((m) => hasVal(r.forecasts[m])));
+  if (!gaps.length) { console.log("  香港realized: 冇空格要補"); return 0; }
+
+  const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+  const target = gaps.filter((r) => r.date < today); // 今日未完,唔補
+  if (!target.length) { console.log("  香港realized: 得今日未settle(正常)"); return 0; }
+
+  const years = [...new Set(target.map((r) => r.date.slice(0, 4)))];
+  const map = await fetchHkRealized(years);
+  let filled = 0;
+  for (const r of target) {
+    if (map[r.date] != null) { r.realized = map[r.date].toFixed(1); filled++; }
+  }
+  console.log(`  香港realized: 補到 ${filled}/${target.length} 行 (${target.map((r) => r.date).join(", ")})`);
+  if (!dryRun && filled) saveLog(cfg.file, rows);
+  return filled;
+}
+
 async function backfillOne(key, cfg, dryRun) {
   const rows = loadLog(cfg.file);
   if (!rows) { console.log(`  ${key}: 冇 ${cfg.file},跳過`); return null; }
@@ -122,6 +168,13 @@ async function backfillOne(key, cfg, dryRun) {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   console.log(`🔧 補回模型預測${dryRun ? "（dry-run,唔會寫檔）" : ""}\n`);
+
+  // 先補香港realized(settle班漏咗嘅日子),再補各地預測
+  try {
+    await backfillHkRealized(dryRun);
+  } catch (e) {
+    console.log(`  香港realized: ❌ ${e.message}`);
+  }
 
   const results = {};
   for (const [key, cfg] of Object.entries(TARGETS)) {

@@ -12,7 +12,7 @@ HKO rhrread(整數,快4分)   ├→ Cloudflare Worker(每分鐘) → Telegram�
 HKO warnsum警告          ┘   雙水喉+破關+edge+METAR
 ZSPD/ZBAA/EGLC/LFPB METAR
 Open-Meteo 6模型         ┬→ Netlify Functions        → Dashboard網頁
-Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
+Polymarket Gamma API     ┘   temperature/polymarket     (6城市tabs)
                          
                          GitHub Actions:
                          - daily-bias(朝晚): bias.json自動校正
@@ -24,11 +24,11 @@ Polymarket Gamma API     ┘   temperature/polymarket     (5城市tabs)
 
 | 檔案 | 跑喺邊 | 做乜 |
 |---|---|---|
-| index.html | Netlify | dashboard:5城市/即時/機率/走勢圖/METAR趨勢/Edge表/🔒鎖定機會 |
+| index.html | Netlify | dashboard:6城市/即時/機率/走勢圖/METAR趨勢/Edge表/🔒鎖定機會 |
 | netlify/functions/temperature.js | Netlify | 代理HKO CSV+METAR(即時/歷史/任意機場)(解決CORS) |
 | netlify/functions/polymarket.js | Netlify | 代理Gamma API:單城市現價+trending市場發現 |
 | worker.js | Cloudflare | 主力警報:每分鐘,雙水喉+4警報+edge+中國METAR |
-| daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias(HK+滬京倫巴5城市) |
+| daily_log.js | GitHub Actions | 朝07:15記預測/晚23:45記實測+計bias(HK+滬京倫巴深6城市) |
 | backfill_bias.js | 手動一次 | 回填歷史bias(已完成,26日) |
 | backfill_forecasts.js | 手動觸發 | 補「有實測冇預測」嘅爛行(cron bug遺留) |
 | scan_cities.js | GitHub Actions | 全球49市場edge掃描,每6小時 |
@@ -184,3 +184,13 @@ worker.js/alert.js已經改成報實際百分比，唔再講「大概率已破�
 
 `spread_probe.js`:Actions → Spread Probe → 揀兩個地點(支援
 hk/hk-airport/shenzhen/shenzhen-airport/guangzhou)。
+
+## ⚠️ GitHub cron延遲實測（排schedule必讀）
+
+2026-08實測:daily-bias個settle班排14:15 UTC,實際跑喺15:18–16:40 UTC,
+**延遲63–145分鐘**。排schedule一定要留呢個buffer,尤其涉及「當地日界」嘅嘢:
+- settle排22:15 HKT → 延遲後衝過香港午夜 → daily_log保險掣skip咗香港settle
+  → 連續3日冇實測入賬(2026-08-03至05),而個系統靜靜雞冇聲出
+- 已改排20:15 HKT(12:15 UTC),留3小時45分buffer
+
+教訓:任何「要喺當地某日之內完成」嘅排程,buffer要照最壞延遲(~2.5小時)計。

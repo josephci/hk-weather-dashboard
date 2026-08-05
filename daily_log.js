@@ -13,7 +13,7 @@
  *     攞天文台總部今日實測最高溫，填返落 forecast_log.csv 對應行，
  *     然後用全部已完成嘅記錄重新計算每個模型嘅bias → bias.json
  *
- * 遠程城市擴展（上海ZSPD/北京ZBAA/倫敦EGLC/巴黎LFPB）：
+ * 遠程城市擴展（上海ZSPD/北京ZBAA/倫敦EGLC/巴黎LFPB/深圳ZGSZ）：
  *   forecast模式順手記埋各城市當地「今日」嘅6模型預測
  *     → forecast_log_{city}.csv（每城市一個檔,唔郁香港個檔）
  *   settle模式結算各城市當地「昨日」：用METAR過去48小時報文搵當日最高

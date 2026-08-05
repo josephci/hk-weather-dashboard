@@ -3,9 +3,11 @@ name: Daily Bias Pipeline
 on:
   schedule:
     - cron: "15 23 * * *" # UTC 23:15 = 香港07:15，記錄今日模型預測
-    # settle set早啲(22:15 HKT):GitHub cron實測會遲成~80分鐘,23:45嘅話
-    # 會跨香港午夜,settle錯日兼讀到凌晨嘅假max(2026-07-23實際發生過)
-    - cron: "15 14 * * *" # UTC 14:15 = 香港22:15，記錄今日實測+重計bias
+    # settle要留足夠buffer:實測GitHub cron延遲去到126-145分鐘(2026-08-03至05),
+    # 排22:15 HKT都會俾佢推過香港午夜,daily_log個保險掣就會skip咗香港settle
+    # (連續3日冇實測入賬)。排20:15 HKT留3小時45分buffer,而香港日高溫
+    # 14-15時就見頂,20:15結算穩陣。
+    - cron: "15 12 * * *" # UTC 12:15 = 香港20:15，記錄今日實測+重計bias
   workflow_dispatch:
     inputs:
       mode:

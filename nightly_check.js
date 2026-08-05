@@ -18,7 +18,7 @@
 const { execSync } = require("child_process");
 const fs = require("fs");
 
-const CITIES = ["shanghai", "beijing", "london", "paris"];
+const CITIES = ["shanghai", "beijing", "london", "paris", "shenzhen"];
 
 function sh(cmd) {
   return execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
@@ -61,12 +61,41 @@ function recentForecastOk(file) {
   return sawRecent ? false : null; // false=有近行但全冇預測;null=根本冇近行
 }
 
+// 反方向:有模型預測但冇realized = settle冇跑到。
+// 2026-08-03至05就係咁:cron延遲2小時衝過香港午夜,保險掣skip咗香港settle,
+// 連續3日靜靜雞失敗。第一版健康檢查只查一個方向,所以捉唔到。
+//
+// ⚠️容忍度要留2日:遠程城市結算「當地昨日」,倫敦巴黎喺settle跑嗰陣
+// 當日仲未完,正常會遲一日;加上cron延遲可能跑喺呢個檢查之後。
+// 所以只當「2日前或更早」嘅行都仲未settle先當有問題。
+function recentRealizedOk(file) {
+  if (!fs.existsSync(file)) return null;
+  const lines = fs.readFileSync(file, "utf-8").trim().split(/\r?\n/).slice(1);
+  const nowHk = Date.now() + 8 * 3600e3;
+  const graceMs = 2 * 86400e3;   // 今日+尋日唔計
+  const windowMs = 5 * 86400e3;  // 太舊嘅唔理(可能係歷史遺留)
+  // ⚠️由新到舊掃,只睇「最新一行可檢查嘅」——由舊到新嘅話,
+  // 一撞到舊嘅好行就會即刻return正常,掩蓋咗新嘅壞行(自我檢查時中過招)
+  for (const line of lines.slice(-6).reverse()) {
+    const cols = line.split(",");
+    const t = new Date(cols[0] + "T00:00:00Z").getTime();
+    const age = nowHk - t;
+    if (age < graceMs || age > windowMs) continue;
+    if (!cols.slice(1, 7).some((v) => v !== "")) continue; // 冇預測嘅行唔喺呢度查
+    return cols[7] !== "" && cols[7] !== undefined;
+  }
+  return null;
+}
+
 function checkBiasProgress(problems, cityLines) {
   let bias = {};
   try { bias = JSON.parse(fs.readFileSync("bias.json", "utf-8")); } catch { /* 冇就空 */ }
 
   if (recentForecastOk("forecast_log.csv") === false) {
     problems.push("香港近兩日有realized但冇模型預測——朝早forecast班可能錯咗mode/死咗");
+  }
+  if (recentRealizedOk("forecast_log.csv") === false) {
+    problems.push("香港近兩日有模型預測但冇realized——晚上settle班冇跑到(cron延遲衝過香港午夜?)");
   }
 
   for (const c of CITIES) {
@@ -86,6 +115,8 @@ function checkBiasProgress(problems, cityLines) {
       problems.push(`${c}嘅log停咗喺${lastDate},bias累積斷咗`);
     } else if (recentForecastOk(file) === false) {
       problems.push(`${c}近兩日得realized冇模型預測,bias唔會增長——查朝早forecast班`);
+    } else if (recentRealizedOk(file) === false) {
+      problems.push(`${c}近兩日得預測冇realized,bias唔會增長——查晚上settle班`);
     }
   }
 }

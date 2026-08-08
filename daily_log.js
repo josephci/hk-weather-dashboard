@@ -342,6 +342,44 @@ async function settleHk(rows) {
   } catch (e) {
     console.log("⚠️ 校準對答案失敗(唔影響其他):", e.message);
   }
+
+  // 順手記低VHHH當日最高,累積「機場vs總部」楔子數據。
+  // 用途:市場跟住VHHH郁(快6-16分鐘),但結算跟HKO總部——
+  // 兩者分歧嗰陣就係「市場以為鎖咗但實際冇」(伏)或者
+  // 「實際鎖咗但市場未知」(機會)。station_wedge.js做分析。
+  try {
+    await recordStationWedge(today, realized);
+  } catch (e) {
+    console.log("⚠️ 站點楔子記錄失敗(唔影響其他):", e.message);
+  }
+}
+
+const WEDGE_LOG = path.join(__dirname, "station_wedge.csv");
+
+async function recordStationWedge(date, hkoMax) {
+  const res = await fetch("https://aviationweather.gov/api/data/metar?ids=VHHH&format=json&hours=26");
+  if (!res.ok) throw new Error(`METAR ${res.status}`);
+  let vhhhMax = null;
+  for (const m of (await res.json()) ?? []) {
+    if (typeof m.temp !== "number") continue;
+    const iso = metarTimeIso(m);
+    if (!iso || cityLocalDate("Asia/Hong_Kong", new Date(iso)) !== date) continue;
+    if (vhhhMax === null || m.temp > vhhhMax) vhhhMax = m.temp;
+  }
+  if (vhhhMax === null) { console.log("ℹ️ 今日冇VHHH報文,楔子跳過"); return; }
+
+  const rows = {};
+  if (fs.existsSync(WEDGE_LOG)) {
+    for (const line of fs.readFileSync(WEDGE_LOG, "utf-8").trim().split(/\r?\n/).slice(1)) {
+      const [d, h, v] = line.split(",");
+      if (d) rows[d] = { hko: h, vhhh: v };
+    }
+  }
+  rows[date] = { hko: hkoMax.toFixed(1), vhhh: String(vhhhMax) };
+  const lines = ["date,hkoMax,vhhhMax", ...Object.keys(rows).sort().map((d) => `${d},${rows[d].hko},${rows[d].vhhh}`)];
+  fs.writeFileSync(WEDGE_LOG, lines.join("\n") + "\n");
+  const diff = vhhhMax - hkoMax;
+  console.log(`✅ 站點楔子 ${date}: HKO ${hkoMax.toFixed(1)}° vs VHHH ${vhhhMax}° (差${diff>=0?"+":""}${diff.toFixed(1)}°)`);
 }
 
 // 遠程城市settle+寫bias.json——就算香港嗰part被skip都照做

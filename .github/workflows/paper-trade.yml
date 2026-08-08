@@ -1,0 +1,56 @@
+name: Paper Trade
+
+# 紙上交易:用真市價真訊號跑策略,唔使真錢。
+# 目的係喺放錢落去之前,證明啲訊號到底有冇數為。
+on:
+  schedule:
+    # 掃訊號:各地下晝高峰後(鎖定機會通常喺見頂之後先出現)
+    - cron: "20 7 * * *"  # 15:20 HKT — 香港/深圳/上海/北京見頂後
+    - cron: "20 15 * * *" # 16:20 BST — 倫敦/巴黎見頂後
+    # 結算:每日一次,結算尋日嘅倉
+    - cron: "40 12 * * *" # 20:40 HKT
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        default: scan
+        options: [scan, settle, report]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-trade
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 決定模式
+        id: m
+        # 唔可以用「而家幾點」判斷(cron延遲可以成2小時,見README)
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "40 12 * * *" ]; then
+            echo "mode=settle" >> $GITHUB_OUTPUT
+          else
+            echo "mode=scan" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 執行
+        run: node paper_trade.js --${{ steps.m.outputs.mode }}
+
+      - name: Commit帳簿
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "actions@github.com"
+          git add paper_trades.csv 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: paper trade ${{ steps.m.outputs.mode }} [skip ci]"
+          git pull --rebase origin main && git push

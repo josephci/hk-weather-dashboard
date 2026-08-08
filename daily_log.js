@@ -201,7 +201,41 @@ function computeBias(rows) {
       biasMax[m] = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) * 100) / 100;
     }
   }
-  return { sampleDays: complete.length, max: biasMax };
+  return { sampleDays: complete.length, max: biasMax, sigmaScale: computeSigmaScale(complete, biasMax) };
+}
+
+// σ校準倍數 = 實際誤差標準差 / 模型自己講嘅σ
+//
+// ⚠️2026-08-08發現:6模型嘅分歧(spread)量度嘅係「模型之間爭議幾多」,
+// 唔係「預測有幾唔準」。啲模型share住相似物理同初始場,所以佢哋一致
+// 唔代表啱——香港實測 std(z)=3.58,即係真實不確定性係模型σ嘅3.6倍,
+// 只有29%結果落喺±1σ內(理論應該68%)。
+// 後果:所有bucket機率都過份自信,熱門格買貴、冷門格錯過。
+//
+// 城市差異好合理:越市區/微氣候複雜嘅結算站,低估得越犀利
+//   香港HKO總部(市區山丘)3.58 > 倫敦EGLC 1.92 > 北京1.35 > 上海0.92 > 巴黎0.58
+//   模型預測~10km格點平均,唔係一個市區站嘅實況;bias校正到平均偏差,
+//   但校正唔到「每日偏差幾多」嘅波動。
+function computeSigmaScale(complete, biasMax) {
+  const zs = [];
+  for (const r of complete) {
+    const vals = [];
+    for (const m of MODELS) {
+      if (!hasVal(r.forecasts[m])) continue;
+      const v = parseFloat(r.forecasts[m]);
+      if (!Number.isNaN(v)) vals.push(v + (biasMax[m] || 0));
+    }
+    if (vals.length < 2) continue;
+    const n = vals.length;
+    const mu = vals.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / (n - 1));
+    if (sd > 0.05) zs.push((parseFloat(r.realized) - mu) / sd);
+  }
+  if (zs.length < MIN_SAMPLES * 2) return null; // 樣本太少,唔好亂改
+  const zm = zs.reduce((a, b) => a + b, 0) / zs.length;
+  const zsd = Math.sqrt(zs.reduce((a, b) => a + (b - zm) ** 2, 0) / (zs.length - 1));
+  // 夾喺合理範圍:太細會過份自信,太大會令個階梯冇資訊
+  return Math.round(Math.min(Math.max(zsd, 0.8), 4) * 100) / 100;
 }
 
 // ---------- forecast模式 ----------

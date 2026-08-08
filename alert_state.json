@@ -11,7 +11,9 @@
   "approachAlerted": 35,
   "pulledBackAlerted": false,
   "lastWarnCodes": "",
-  "edgeAlerted": {},
+  "edgeAlerted": {
+    "34°C": -13
+  },
   "fastAlerted": [
     31
   ]

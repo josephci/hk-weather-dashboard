@@ -1,6 +1,6 @@
 {
   "date": "2026-08-08",
-  "prevCurrent": 34.6,
+  "prevCurrent": 34.4,
   "prevMax": 34.7,
   "alertedFloors": [
     30,
@@ -15,6 +15,7 @@
     "34°C": -13
   },
   "fastAlerted": [
-    31
+    31,
+    35
   ]
 }

@@ -1,11 +1,13 @@
 {
   "date": "2026-08-09",
-  "prevCurrent": 31.6,
-  "prevMax": 34.7,
+  "prevCurrent": 31.2,
+  "prevMax": 31.6,
   "alertedFloors": [],
   "approachAlerted": null,
   "pulledBackAlerted": false,
   "lastWarnCodes": "",
   "edgeAlerted": {},
-  "fastAlerted": []
+  "fastAlerted": [
+    32
+  ]
 }

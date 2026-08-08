@@ -79,14 +79,18 @@ async function fetchMetar() {
   if (!res.ok) throw new Error(`METAR API 錯誤: ${res.status}`);
   const arr = await res.json();
   const out = {};
+  // ⚠️API可能一個站返多份報文(唔保證順序)。以前係「最後入嘅贏」,
+  // 攞到舊報文都唔知——2026-08-06見過朝早8點顯示緊尋日15:00嘅34°。
   for (const m of Array.isArray(arr) ? arr : []) {
-    if (m.icaoId && typeof m.temp === "number") {
-      out[m.icaoId] = {
-        tempC: m.temp,
-        obsTime: metarTimeIso(m),
-        wx: m.wxString || null, // 現在天氣代碼(RA=雨,SHRA=驟雨,TS=雷暴...),升返風險判斷用
-      };
-    }
+    if (!m.icaoId || typeof m.temp !== "number") continue;
+    const iso = metarTimeIso(m);
+    const prev = out[m.icaoId];
+    if (prev && prev.obsTime && iso && Date.parse(iso) <= Date.parse(prev.obsTime)) continue;
+    out[m.icaoId] = {
+      tempC: m.temp,
+      obsTime: iso,
+      wx: m.wxString || null, // 現在天氣代碼(RA=雨,SHRA=驟雨,TS=雷暴...),升返風險判斷用
+    };
   }
   return Object.keys(out).length > 0 ? out : null;
 }

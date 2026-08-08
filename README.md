@@ -219,3 +219,17 @@ hk/hk-airport/shenzhen/shenzhen-airport/guangzhou)。
 
 market_race會分辨到:如果「市場跟尾METAR、行先CSV」→ 答案就係渠道問題,
 換水喉就追得返;如果「所有公開渠道都喺市場之後」→ 先至係真.行先。
+
+## 2026-08-06 三個顯示bug（用戶截圖捉到）
+
+朝早8:53個dashboard顯示「赤鱲角METAR 34.0° 下午03:00」——8點幾唔可能34度,
+而個時間睇落似係啱啱。查完三個獨立問題:
+
+1. **METAR揀錯報文**:aviationweather一個站可能返多份報文(唔保證順序),
+   舊code係「最後入嘅贏」,所以攞到18個鐘前嗰份。改為一律揀obsTime最新。
+2. **時間顯示呃人**:formatRelativeTime超過60分鐘就淨顯示個鐘數,
+   一個18小時前嘅讀數顯示成「下午03:00」,完全睇唔出係舊。
+   改為一律標明幾耐之前,>3小時加⚠️,跨日顯示「N日前」。
+3. **未來1小時panel卡住**:pollHourNowcast喺`currentRealized`set之前
+   被call(喺處理雨量嗰度),第一次poll實係null → 卡住「等緊即時讀數…」。
+   改為喺currentRealized set咗之後先call。

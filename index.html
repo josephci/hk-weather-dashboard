@@ -669,10 +669,7 @@ async function pollLive() {
       lastMetars = json.metars;
       if (currentCity !== 'hk') renderCnLive();
     }
-    if (json.rain) {
-      rainNow = json.rain;
-      pollHourNowcast(); // 有新雨量數據就重算1小時預測
-    }
+    if (json.rain) rainNow = json.rain;
 
     lastRecordTime = json.live.recordTime;
     document.getElementById('liveDot').classList.remove('stale');
@@ -680,6 +677,9 @@ async function pollLive() {
       '更新 ' + new Date().toLocaleTimeString('zh-HK', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
     currentRealized = Number(value); // 俾軌跡上限用
+    // ⚠️一定要喺currentRealized set咗之後先算:以前喺上面(攞完雨量嗰度)call,
+    // 第一次poll撞正currentRealized仲係null,個panel就卡住「等緊即時讀數…」
+    pollHourNowcast();
     updateGaugeNeedle(Number(value));
     clearError();
   } catch (e) {
@@ -694,7 +694,13 @@ function formatRelativeTime(iso) {
   const diffMin = Math.round((Date.now() - t.getTime()) / 60000);
   if (diffMin < 1) return '啱啱';
   if (diffMin < 60) return `${diffMin}分鐘前`;
-  return t.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' });
+  // ⚠️以前>60分鐘就淨顯示個鐘數,一個18個鐘前嘅讀數會顯示成「下午03:00」,
+  // 睇落似係啱啱嘅數(2026-08-06朝早8點見到METAR「下午03:00 34°」)。
+  // 一律標明幾耐之前,超過3個鐘加⚠️。
+  const hrs = diffMin / 60;
+  const clock = t.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' });
+  if (hrs < 24) return `${clock}（${hrs.toFixed(hrs < 10 ? 1 : 0)}小時前${hrs >= 3 ? ' ⚠️' : ''}）`;
+  return `${clock}（${Math.round(hrs / 24)}日前 ⚠️）`;
 }
 
 // ============================================================

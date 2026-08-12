@@ -1,6 +1,6 @@
 {
   "date": "2026-08-12",
-  "prevCurrent": 33.8,
+  "prevCurrent": 33.5,
   "prevMax": 34.5,
   "alertedFloors": [
     32,
@@ -8,7 +8,7 @@
     34
   ],
   "approachAlerted": null,
-  "pulledBackAlerted": false,
+  "pulledBackAlerted": true,
   "lastWarnCodes": "",
   "edgeAlerted": {},
   "fastAlerted": []

@@ -52,6 +52,6 @@ jobs:
         run: |
           git config user.name "weather-bot"
           git config user.email "actions@github.com"
-          git add forecast_log*.csv bias.json calibration_log.csv 2>/dev/null || true
+          git add forecast_log*.csv bias.json calibration_log.csv station_wedge.csv 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: daily bias log (${{ steps.mode.outputs.mode }}) [skip ci]"
           git push

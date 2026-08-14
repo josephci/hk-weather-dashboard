@@ -823,7 +823,10 @@ async function pollForecast() {
     const n = values.length;
     const mean = values.reduce((a,b)=>a+b,0)/n;
     const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
-    const std = Math.sqrt(variance);
+    // ⚠️模型分歧量度嘅係「模型之間爭議幾多」,唔係「有幾唔準」。
+    // 實測香港std(z)=3.58——真實不確定性係模型σ嘅3.6倍,只有29%結果
+    // 落喺±1σ內(理論68%)。唔乘返呢個倍數,所有bucket機率都過份自信。
+    const std = Math.sqrt(variance) * ((await getBias()).sigmaScale || 1);
     const spread = Math.max(...values) - Math.min(...values);
 
     forecastState = { mean, std, spread, low: mean - 3*std, high: mean + 3*std };
@@ -870,7 +873,7 @@ async function pollTomorrow() {
     const n = values.length;
     const mean = values.reduce((a,b)=>a+b,0)/n;
     const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
-    const std = Math.sqrt(variance);
+    const std = Math.sqrt(variance) * ((await getBias()).sigmaScale || 1); // 同今日一樣要放闊
     const spread = Math.max(...values) - Math.min(...values);
 
     document.getElementById('tmrMean').textContent = mean.toFixed(1)+'°';
@@ -1363,7 +1366,10 @@ async function pollCnCity() {
     let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
     const spread = Math.max(...values) - Math.min(...values);
     std = Math.max(std, unit === 'F' ? 0.9 : 0.5);
-    if (!cityBias) std *= 1.4; // 無bias校正,放大補償
+    // 有實測σ校準就用返佢(每個城市唔同:機場站準啲、市區站差好遠);
+    // 未夠數據先用寫死嘅×1.4做fallback
+    const sScale = cb?.sigmaScale;
+    std *= sScale || (cityBias ? 1 : 1.4);
 
     document.getElementById('cnMean').textContent = mean.toFixed(1)+'°';
     document.getElementById('cnStd').textContent = std.toFixed(1)+'°';

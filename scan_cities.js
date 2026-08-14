@@ -181,7 +181,9 @@ async function cityModelProbs(city, cityKey, unit) {
   const mean = values.reduce((a,b)=>a+b,0)/n;
   let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
   std = Math.max(std, unit === "F" ? STD_FLOOR * 1.8 : STD_FLOOR);
-  if (!corrected) std *= NO_BIAS_STD_INFLATE;
+  // σ校準:模型分歧唔等於預測誤差(香港實測差3.58倍),有實測倍數就用返
+  const sScale = city.hasBias ? biasAll.sigmaScale : biasAll.cities?.[cityKey]?.sigmaScale;
+  std *= sScale || (corrected ? 1 : NO_BIAS_STD_INFLATE);
 
   // 逐度機率map（範圍闊啲，°F可以去到110+）
   const lo = Math.floor(mean - 6 * std) - 2, hi = Math.ceil(mean + 6 * std) + 2;

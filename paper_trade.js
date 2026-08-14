@@ -13,7 +13,12 @@
  * 交易嘅訊號(全部係現有dashboard邏輯):
  *   LOCK_YES  — 「N or higher」而實測max已經>=N → 結果已定,買YES
  *   LOCK_NO   — bucket已經死咗(實測max升穿咗) → 買NO
- *   (model edge訊號分開記,方便比較邊種訊號真係賺錢)
+ *   MODEL_YES/NO — 模型機率同市價差>=12個百分點 → 賭模型啱
+ *
+ * 兩類訊號分開記帳,因為佢哋答唔同問題:
+ *   鎖定  = 唔靠模型(只靠已實現事實),賺唔賺錢睇結算源啱唔啱
+ *   模型  = 完全靠模型準唔準,賺唔賺錢睇你有冇真edge
+ *   兩者對比先答到「係咪淨係lock有得做,定係model edge都得」
  *
  * 保守假設(寧願低估自己):
  *   - 成交價 = 現價 + SLIPPAGE(買賣差價,溫度market通常2-5¢)
@@ -167,6 +172,110 @@ function findLocks(buckets, realizedMax, unit) {
   return out;
 }
 
+
+// ---------- 模型機率(同dashboard一致:bias校正 + σ校準) ----------
+const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
+const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/bias.json";
+const EDGE_THRESHOLD = 12; // 百分點:差幾多先值得入場(要蓋過差價)
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t = 1/(1+p*x);
+  return sign * (1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));
+}
+function normalCdf(x, mu, sd) {
+  if (sd <= 0) return x >= mu ? 1 : 0;
+  return 0.5 * (1 + erf((x - mu) / (sd * Math.SQRT2)));
+}
+
+let _biasCache = null;
+async function getBias() {
+  if (_biasCache) return _biasCache;
+  try {
+    const res = await fetch(BIAS_URL + "?_=" + Date.now());
+    _biasCache = res.ok ? await res.json() : {};
+  } catch { _biasCache = {}; }
+  return _biasCache;
+}
+
+// 6模型今日預測 → 每個整數bucket嘅機率map
+async function modelProbs(cityKey, cfg, dateStr, unit) {
+  const coords = CITY_COORDS[cityKey];
+  if (!coords) return null;
+  const unitParam = unit === "F" ? "&temperature_unit=fahrenheit" : "";
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}` +
+    `&daily=temperature_2m_max&timezone=${encodeURIComponent(cfg.tz)}&models=${MODELS.join(",")}` +
+    `&start_date=${dateStr}&end_date=${dateStr}${unitParam}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+
+  const all = await getBias();
+  const isHk = cityKey === "hong-kong";
+  const bias = isHk ? (all.max || {}) : (all.cities?.[cityKey]?.max || {});
+  const sScale = (isHk ? all.sigmaScale : all.cities?.[cityKey]?.sigmaScale) || 1;
+
+  const vals = [];
+  for (const m of MODELS) {
+    const arr = data.daily?.[`temperature_2m_max_${m}`];
+    if (arr && arr[0] != null) vals.push(arr[0] + (bias[m] || 0) * (unit === "F" ? 1.8 : 1));
+  }
+  if (vals.length < 2) return null;
+  const n = vals.length;
+  const mu = vals.reduce((a, b) => a + b, 0) / n;
+  let sd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / (n - 1));
+  sd = Math.max(sd, unit === "F" ? 0.9 : 0.5) * sScale;
+
+  const probs = {};
+  const lo = Math.floor(mu - 6 * sd) - 2, hi = Math.ceil(mu + 6 * sd) + 2;
+  for (let b = lo; b <= hi; b++) probs[b] = normalCdf(b + 1, mu, sd) - normalCdf(b, mu, sd);
+  return { probs, lo, hi, mu, sd, calibrated: sScale !== 1 };
+}
+
+// bucket label → 模型機率(處理「N or higher」「A-B」等格式)
+function bucketProb(label, model) {
+  const t = label.toLowerCase();
+  const num = t.match(/(-?\d+)/);
+  if (!num) return null;
+  const deg = parseInt(num[1], 10);
+  const sum = (a, b) => { let s = 0; for (let k = a; k <= b; k++) s += model.probs[k] || 0; return s; };
+  if (t.includes("higher") || t.includes("above")) return sum(deg, model.hi);
+  if (t.includes("below") || t.includes("lower")) return sum(model.lo, deg);
+  const range = t.match(/(-?\d+)\s*[-–—]\s*(-?\d+)/);
+  if (range) return sum(parseInt(range[1], 10), parseInt(range[2], 10));
+  return model.probs[deg] ?? 0;
+}
+
+// 模型 vs 市價,搵edge。⚠️同鎖定訊號分開記帳:
+// 鎖定唔靠模型(只靠已實現事實),model edge完全靠模型啱唔啱。
+// 兩者分開先知「係咪淨係lock有得做,定係model edge都得」。
+function findModelEdges(buckets, model) {
+  const out = [];
+  for (const b of buckets) {
+    if (b.yesPrice < MIN_PRICE || b.yesPrice > MAX_PRICE) continue;
+    const mp = bucketProb(b.label, model);
+    if (mp === null) continue;
+    const modelPct = Math.round(mp * 100);
+    const edge = modelPct - b.yesPrice;
+    if (Math.abs(edge) < EDGE_THRESHOLD) continue;
+    out.push(edge > 0
+      ? { bucket: b.label, side: "YES", price: b.yesPrice, signal: "MODEL_YES", modelPct, edge }
+      : { bucket: b.label, side: "NO", price: 100 - b.yesPrice, signal: "MODEL_NO", modelPct, edge });
+  }
+  return out;
+}
+
+// 城市座標(模型預測用,同dashboard一致)
+const CITY_COORDS = {
+  "hong-kong": { lat: 22.302,  lon: 114.174 },
+  shanghai:    { lat: 31.143,  lon: 121.805 },
+  beijing:     { lat: 40.080,  lon: 116.585 },
+  london:      { lat: 51.505,  lon: 0.055 },
+  paris:       { lat: 48.9694, lon: 2.4414 },
+  shenzhen:    { lat: 22.639,  lon: 113.811 },
+};
+
 // ---------- scan ----------
 async function scan() {
   const ledger = loadLedger();
@@ -182,10 +291,25 @@ async function scan() {
       if (!mkt) { console.log(`  ${cityKey}: 今日冇market`); continue; }
       if (realizedMax === null) { console.log(`  ${cityKey}: 攞唔到實測max`); continue; }
 
+      // 兩類訊號分開:鎖定唔靠模型(已實現事實),model edge完全靠模型
       const locks = findLocks(mkt.buckets, realizedMax, mkt.unit);
-      if (!locks.length) { console.log(`  ${cityKey}: 實測${realizedMax}° — 冇鎖定機會`); continue; }
+      let edges = [];
+      try {
+        const model = await modelProbs(cityKey, cfg, dateStr, mkt.unit);
+        if (model) {
+          edges = findModelEdges(mkt.buckets, model);
+          // 同一個bucket如果已經有鎖定訊號,就唔好再開model倉(重複)
+          const lockedLabels = new Set(locks.map((l) => l.bucket));
+          edges = edges.filter((e) => !lockedLabels.has(e.bucket));
+        }
+      } catch (e) {
+        console.log(`  ${cityKey}: 模型機率攞唔到(${e.message}),只做鎖定`);
+      }
 
-      for (const lk of locks) {
+      const signals = [...locks, ...edges];
+      if (!signals.length) { console.log(`  ${cityKey}: 實測${realizedMax}° — 冇機會`); continue; }
+
+      for (const lk of signals) {
         // 同一日同一bucket唔重複開倉
         if (ledger.some((r) => r.date === dateStr && r.city === cityKey && r.bucket === lk.bucket)) continue;
         const fill = Math.min(99, lk.price + SLIPPAGE); // 保守:食差價
@@ -197,7 +321,8 @@ async function scan() {
         });
         opened++;
         const profit = ((100 - fill) / fill * 100).toFixed(1);
-        console.log(`  ✅ ${cityKey} ${lk.bucket} 買${lk.side}@${fill}¢ (現價${lk.price}+${SLIPPAGE}差價) 潛在+${profit}% [實測${realizedMax}°]`);
+        const tag = lk.signal.startsWith("LOCK") ? `[🔒實測${realizedMax}°]` : `[📊模${lk.modelPct}% edge${lk.edge > 0 ? "+" : ""}${lk.edge}]`;
+        console.log(`  ✅ ${cityKey} ${lk.bucket} 買${lk.side}@${fill}¢ (現價${lk.price}+${SLIPPAGE}差價) 潛在+${profit}% ${tag}`);
       }
     } catch (e) {
       console.log(`  ${cityKey}: ❌ ${e.message}`);
@@ -311,6 +436,24 @@ function report() {
   console.log("\n   分城市:");
   for (const [city, c] of Object.entries(byCity)) {
     console.log(`     ${city}: ${c.w}/${c.n}勝 · ${c.pnl >= 0 ? "+" : ""}$${c.pnl.toFixed(2)}`);
+  }
+
+  // 🔑 關鍵對比:鎖定(唔靠模型) vs model edge(完全靠模型)
+  const lockRows = done.filter((r) => r.signal.startsWith("LOCK"));
+  const modelRows = done.filter((r) => r.signal.startsWith("MODEL"));
+  if (lockRows.length && modelRows.length) {
+    const roi = (rs) => rs.reduce((s, r) => s + parseFloat(r.pnl || 0), 0) / rs.reduce((s, r) => s + r.stake, 0) * 100;
+    const lr = roi(lockRows), mr = roi(modelRows);
+    console.log("\n   🔑 鎖定 vs 模型(呢個決定你套系統嘅價值喺邊):");
+    console.log(`     🔒鎖定   ${lockRows.length}注  ${lr >= 0 ? "+" : ""}${lr.toFixed(1)}%  (唔靠模型,只靠已實現事實)`);
+    console.log(`     📊模型   ${modelRows.length}注  ${mr >= 0 ? "+" : ""}${mr.toFixed(1)}%  (完全靠模型準唔準)`);
+    if (modelRows.length >= 20) {
+      if (mr > 3) console.log("     → 模型edge都賺錢:值得投入調模型,規模大過鎖定好多");
+      else if (mr < -3) console.log("     → 模型edge蝕錢:唔好靠模型落注,專心做鎖定就算");
+      else console.log("     → 模型edge打和:即係模型冇贏過市場,鎖定先係你嘅真edge");
+    } else {
+      console.log(`     (模型倉得${modelRows.length}注,要20+先夠判斷)`);
+    }
   }
 
   // 最重要嗰句:輸咗嘅「已鎖」注 = 訊號或者結算源有問題

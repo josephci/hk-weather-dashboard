@@ -71,7 +71,7 @@ function logFileFor(cityKey) {
 // 累積落嚟就答到:「話70%嗰啲,實際係咪真係7成中?」——冇呢個
 // feedback loop,所有edge數字都係憑感覺信。
 const CALIB_LOG = path.join(__dirname, "calibration_log.csv");
-const CALIB_HEADER = "date,bucket,prob,hit";
+const CALIB_HEADER = "date,bucket,prob,marketPrice,hit";
 
 function erf(x) {
   const sign = x < 0 ? -1 : 1; x = Math.abs(x);
@@ -88,32 +88,67 @@ function loadCalib() {
   if (!fs.existsSync(CALIB_LOG)) return [];
   return fs.readFileSync(CALIB_LOG, "utf-8").trim().split(/\r?\n/).slice(1)
     .map((line) => {
-      const [date, bucket, prob, hit] = line.split(",");
-      return { date, bucket: parseInt(bucket, 10), prob: parseFloat(prob), hit };
+      const c = line.split(",");
+      // 向後兼容:舊格式係 date,bucket,prob,hit (4欄);新格式加咗marketPrice (5欄)
+      const [date, bucket, prob] = c;
+      const marketPrice = c.length >= 5 ? c[3] : "";
+      const hit = c.length >= 5 ? c[4] : c[3];
+      return { date, bucket: parseInt(bucket, 10), prob: parseFloat(prob), marketPrice, hit };
     })
     .filter((r) => r.date && !Number.isNaN(r.bucket));
 }
 
 function saveCalib(rows) {
   rows.sort((a, b) => a.date.localeCompare(b.date) || a.bucket - b.bucket);
-  const lines = [CALIB_HEADER, ...rows.map((r) => `${r.date},${r.bucket},${r.prob.toFixed(4)},${r.hit ?? ""}`)];
+  const lines = [CALIB_HEADER, ...rows.map((r) => `${r.date},${r.bucket},${r.prob.toFixed(4)},${r.marketPrice ?? ""},${r.hit ?? ""}`)];
   fs.writeFileSync(CALIB_LOG, lines.join("\n") + "\n");
 }
 
 // 記低今朝個機率分佈(用同dashboard一樣嘅口徑:6模型+bias,未條件化)
-function recordCalibForecast(date, values) {
+// 攞當日香港market每個整數bucket嘅價(用嚟同模型對數)
+const CALIB_MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+async function fetchHkMarketPrices(date) {
+  const [, m, d] = date.split("-").map(Number);
+  const slug = `highest-temperature-in-hong-kong-on-${CALIB_MONTHS[m - 1]}-${d}`;
+  const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+  if (!res.ok) return {};
+  const ev = (await res.json())?.[0];
+  if (!ev) return {};
+  const out = {};
+  for (const mkt of ev.markets || []) {
+    const label = (mkt.groupItemTitle || mkt.question || "").trim().toLowerCase();
+    // 只要「單一整數」嘅bucket(同校準log嘅bucket對應得返)
+    if (/higher|above|below|lower|[-–—]/.test(label)) continue;
+    const num = label.match(/(-?\d+)/);
+    if (!num) continue;
+    try {
+      const p = JSON.parse(mkt.outcomePrices || "[]");
+      if (p[0] !== undefined) out[parseInt(num[1], 10)] = Math.round(parseFloat(p[0]) * 100);
+    } catch { /* ignore */ }
+  }
+  return out;
+}
+
+async function recordCalibForecast(date, values) {
   const n = values.length;
   if (n < 2) return;
   const mean = values.reduce((a, b) => a + b, 0) / n;
   const std = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(n - 1, 1));
   const rows = loadCalib().filter((r) => r.date !== date); // 同日重跑就覆蓋
+
+  // ⭐ 同時記低市價:冇呢個你只知「模型準唔準」,唔知「模型有冇贏過市場」。
+  // 市場本身都可能過份自信/保守——兩者Brier score對比先答到你有冇edge。
+  let prices = {};
+  try { prices = await fetchHkMarketPrices(date); } catch (e) { console.log("ℹ️ 市價攞唔到:", e.message); }
+
   const range = Math.max(4 * std, 3);
   for (let b = Math.floor(mean - range); b < Math.ceil(mean + range); b++) {
     const p = normalCdf(b + 1, mean, std) - normalCdf(b, mean, std);
-    if (p >= 0.02) rows.push({ date, bucket: b, prob: p, hit: "" });
+    if (p >= 0.02) rows.push({ date, bucket: b, prob: p, marketPrice: prices[b] ?? "", hit: "" });
   }
   saveCalib(rows);
-  console.log(`✅ 已記錄 ${date} 校準快照(${rows.filter((r) => r.date === date).length}個bucket)`);
+  const withPrice = rows.filter((r) => r.date === date && r.marketPrice !== "").length;
+  console.log(`✅ 已記錄 ${date} 校準快照(${rows.filter((r) => r.date === date).length}個bucket,${withPrice}個有市價)`);
 }
 
 // 對答案:實測max落喺邊格
@@ -147,6 +182,41 @@ function reportReliability(rows) {
     const gap = actual - said;
     const verdict = Math.abs(gap) < 0.08 ? "✓準" : gap > 0 ? "↑實際高過講(過份保守)" : "↓實際低過講(過份自信)";
     console.log(`  ${(lo*100).toFixed(0)}-${(hi*100).toFixed(0)}%: 講${(said*100).toFixed(0)}% 實際${(actual*100).toFixed(0)}% (n=${inBand.length}) ${verdict}`);
+  }
+  reportVsMarket(done);
+}
+
+// ⭐ 模型 vs 市場:邊個估得準?
+// 上面個可靠度表只答到「你個模型準唔準」,答唔到「你有冇贏過市場」。
+// 市場自己都可能過份自信/保守——如果佢比你準,你就冇model edge,
+// 只有鎖定edge(靠已實現事實,唔靠預測)。
+// 用Brier score:mean((機率 - 結果)²),越細越準。
+function reportVsMarket(done) {
+  const paired = done.filter((r) => r.marketPrice !== "" && r.marketPrice !== undefined && !Number.isNaN(parseFloat(r.marketPrice)));
+  if (paired.length < 20) {
+    console.log(`ℹ️ 模型vs市場對比:得${paired.length}個有市價嘅樣本(要20+)。市價由今日起先開始記。`);
+    return;
+  }
+  let bModel = 0, bMarket = 0;
+  for (const r of paired) {
+    const outcome = r.hit === "1" ? 1 : 0;
+    bModel += (r.prob - outcome) ** 2;
+    bMarket += (parseFloat(r.marketPrice) / 100 - outcome) ** 2;
+  }
+  bModel /= paired.length; bMarket /= paired.length;
+  const better = bModel < bMarket;
+  const gapPct = Math.abs(bModel - bMarket) / Math.max(bMarket, 1e-9) * 100;
+
+  console.log(`\n🎯 模型 vs 市場(${paired.length}個配對樣本,Brier score越細越準):`);
+  console.log(`   模型 ${bModel.toFixed(4)}   市場 ${bMarket.toFixed(4)}`);
+  if (gapPct < 3) {
+    console.log("   → 打和。模型冇贏過市場——你嘅edge唔喺模型度,");
+    console.log("     專心做🔒鎖定(靠已實現事實)就算,唔好花時間調模型。");
+  } else if (better) {
+    console.log(`   → ✓ 模型贏市場 ${gapPct.toFixed(0)}%。有真model edge,值得繼續調。`);
+  } else {
+    console.log(`   → ⚠️ 市場贏模型 ${gapPct.toFixed(0)}%。跟模型落注會蝕俾市場,`);
+    console.log("     model edge訊號要停,淨做鎖定。");
   }
 }
 

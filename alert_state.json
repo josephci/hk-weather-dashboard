@@ -1,11 +1,11 @@
 {
   "date": "2026-08-14",
-  "prevCurrent": 26.9,
+  "prevCurrent": 27.3,
   "prevMax": 30.7,
   "alertedFloors": [],
   "approachAlerted": null,
-  "pulledBackAlerted": false,
-  "lastWarnCodes": "WTS",
+  "pulledBackAlerted": true,
+  "lastWarnCodes": "",
   "edgeAlerted": {
     "30°C": -19,
     "31°C": 14

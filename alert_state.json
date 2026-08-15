@@ -1,6 +1,6 @@
 {
   "date": "2026-08-15",
-  "prevCurrent": 27.6,
+  "prevCurrent": 27.2,
   "prevMax": 28.2,
   "alertedFloors": [
     28
@@ -11,11 +11,10 @@
   "edgeAlerted": {
     "25°C": -16,
     "26°C": -81,
-    "28°C": 19,
     "29°C": 14,
-    "30°C": 17,
-    "31°C": 17,
-    "32°C or higher": 34
+    "30°C": 25,
+    "31°C": 26,
+    "32°C or higher": 26
   },
   "fastAlerted": [
     28

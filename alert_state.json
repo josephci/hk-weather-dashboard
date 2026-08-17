@@ -6,6 +6,12 @@
   "approachAlerted": null,
   "pulledBackAlerted": false,
   "lastWarnCodes": "",
-  "edgeAlerted": {},
+  "edgeAlerted": {
+    "27°C": -17,
+    "28°C": -57,
+    "29°C": 14,
+    "30°C": 58,
+    "31°C": 26
+  },
   "fastAlerted": []
 }

@@ -214,7 +214,7 @@ async function modelProbs(cityKey, cfg, dateStr, unit) {
   const all = await getBias();
   const isHk = cityKey === "hong-kong";
   const bias = isHk ? (all.max || {}) : (all.cities?.[cityKey]?.max || {});
-  const sScale = (isHk ? all.sigmaScale : all.cities?.[cityKey]?.sigmaScale) || 1;
+  const sCfg = isHk ? all : (all.cities?.[cityKey] || {});
 
   const vals = [];
   for (const m of MODELS) {
@@ -225,12 +225,24 @@ async function modelProbs(cityKey, cfg, dateStr, unit) {
   const n = vals.length;
   const mu = vals.reduce((a, b) => a + b, 0) / n;
   let sd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / (n - 1));
-  sd = Math.max(sd, unit === "F" ? 0.9 : 0.5) * sScale;
+  sd = Math.max(sd, unit === "F" ? 0.9 : 0.5);
+  // 同dashboard一條公式(index.html calibratedStd):σ²=w·(σ×scale)²+(1−w)·sigmaAbs²
+  // 唔可以淨係乘倍數——香港corr(σ,|誤差|)=−0.15,乘倍數等於放大噪音。
+  // sigmaAbs量度單位係°C,°F市場要×1.8。
+  const abs = sCfg.sigmaAbs ? sCfg.sigmaAbs * (unit === "F" ? 1.8 : 1) : null;
+  const scale = sCfg.sigmaScale || null;
+  const calibrated = !!(abs || scale);
+  if (abs) {
+    const w = Math.min(Math.max(sCfg.sigmaWeight ?? 0, 0), 1);
+    sd = Math.sqrt(w * (sd * (scale || 1)) ** 2 + (1 - w) * abs ** 2);
+  } else if (scale) {
+    sd *= scale;
+  }
 
   const probs = {};
   const lo = Math.floor(mu - 6 * sd) - 2, hi = Math.ceil(mu + 6 * sd) + 2;
   for (let b = lo; b <= hi; b++) probs[b] = normalCdf(b + 1, mu, sd) - normalCdf(b, mu, sd);
-  return { probs, lo, hi, mu, sd, calibrated: sScale !== 1 };
+  return { probs, lo, hi, mu, sd, calibrated };
 }
 
 // bucket label → 模型機率(處理「N or higher」「A-B」等格式)

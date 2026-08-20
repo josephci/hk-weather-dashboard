@@ -121,6 +121,52 @@ function checkBiasProgress(problems, cityLines) {
   }
 }
 
+// feedback loop健康:呢兩樣壞咗係唔會有錯誤訊息嘅,dashboard只會靜靜哋
+// 顯示「累積緊」或者照用一個過份自信嘅σ。2026-08-20兩樣同時中招:
+//   ① daily_log calibration_log加咗marketPrice欄,index.html仲讀住舊第4欄
+//      → 45個已結算樣本全部filter走,可靠度表變0
+//   ② bias.json一直冇寫香港嘅sigmaScale(5個遠程城市有,香港冇)
+//      → 香港階梯冇放闊σ,29°C照報79%
+// 所以呢度直接驗「dashboard會讀到啲乜」,唔係淨係驗個檔存唔存在。
+function checkFeedbackLoop(problems, notes) {
+  try {
+    const lines = fs.readFileSync("calibration_log.csv", "utf-8").trim().split(/\r?\n/);
+    const header = (lines[0] || "").split(",");
+    const body = lines.slice(1).filter(Boolean);
+    // 照index.html嘅規矩讀:5欄攞第5,4欄攞第4
+    const settled = body.filter((l) => {
+      const c = l.split(",");
+      const hit = (c.length >= 5 ? c[4] : c[3] || "").trim();
+      return hit === "0" || hit === "1";
+    }).length;
+    if (header[header.length - 1] !== "hit") {
+      problems.push(`calibration_log最後一欄係「${header[header.length - 1]}」唔係hit——index.html讀唔到,可靠度表會變0`);
+    } else if (body.length >= 25 && settled === 0) {
+      problems.push(`calibration_log有${body.length}行但一個已結算樣本都讀唔到——settle冇填hit,可靠度表死咗`);
+    } else {
+      notes.push(`可靠度樣本 ${settled}個(${body.length}行)`);
+    }
+  } catch {
+    notes.push("calibration_log未存在(daily_log未跑過settle)");
+  }
+
+  try {
+    const bias = JSON.parse(fs.readFileSync("bias.json", "utf-8"));
+    const ok = (o) => o && o.sigmaAbs && o.sigmaScale;
+    const missing = [];
+    if (bias.sampleDays >= 20 && !ok(bias)) missing.push("香港");
+    for (const c of CITIES) {
+      const cb = bias.cities?.[c];
+      if (cb && cb.sampleDays >= 20 && !ok(cb)) missing.push(c);
+    }
+    if (missing.length) {
+      problems.push(`bias.json冇${missing.join("/")}嘅σ校準(sigmaAbs/sigmaScale)——夠樣本但冇寫,呢啲城市個機率階梯仲用緊未校準嘅σ`);
+    } else if (bias.sigmaAbs) {
+      notes.push(`香港σ校準 常數${bias.sigmaAbs}° · per-day權重${bias.sigmaWeight ?? 0}`);
+    }
+  } catch { /* bias.json讀唔到,checkBiasProgress嗰邊已經會嘈 */ }
+}
+
 function checkMainPollution(problems) {
   try {
     const n = parseInt(sh(`git log --oneline --since="26 hours ago" --grep="chore: temp log" origin/main | wc -l`), 10);
@@ -154,6 +200,7 @@ async function main() {
   const problems = [], notes = [], cityLines = [];
   await checkWorkflowRuns(problems, notes);
   checkBiasProgress(problems, cityLines);
+  checkFeedbackLoop(problems, notes);
   checkMainPollution(problems);
   checkDataBranch(problems, notes);
 

@@ -271,7 +271,7 @@ function computeBias(rows) {
       biasMax[m] = Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) * 100) / 100;
     }
   }
-  return { sampleDays: complete.length, max: biasMax, sigmaScale: computeSigmaScale(complete, biasMax) };
+  return { sampleDays: complete.length, max: biasMax, ...computeSigmaModel(complete, biasMax) };
 }
 
 // σ校準倍數 = 實際誤差標準差 / 模型自己講嘅σ
@@ -286,8 +286,22 @@ function computeBias(rows) {
 //   香港HKO總部(市區山丘)3.58 > 倫敦EGLC 1.92 > 北京1.35 > 上海0.92 > 巴黎0.58
 //   模型預測~10km格點平均,唔係一個市區站嘅實況;bias校正到平均偏差,
 //   但校正唔到「每日偏差幾多」嘅波動。
-function computeSigmaScale(complete, biasMax) {
-  const zs = [];
+//
+// ⚠️2026-08-20再發現:淨係「乘個倍數」係錯嘅補救法。香港嘅
+//   corr(模型σ, |實際誤差|) = −0.15
+// 即係話模型σ喺香港完全冇per-day預測力(仲要輕微負相關)。乘3.4之後:
+//   模型σ=0.20嘅日 → 0.68°(仲係過份自信,實際誤差std其實有1.63°)
+//   模型σ=1.68嘅日 → 5.7° (個階梯攤到25-34°C,完全冇資訊)
+// 等於將噪音放大3.4倍——兩邊都錯,只係錯嘅方向唔同。
+//
+// 正解:睇corr決定「per-day分歧」同「常數誤差std」各信幾多。
+//   σ² = w·(模型σ×scale)² + (1−w)·sigmaAbs² ,  w = clamp(corr, 0, 1)
+//   香港 w=0    → 直接用 sigmaAbs 1.63°(常數,唔理當日分歧)
+//   上海 w=0.53 → 分歧真係有訊號,一半跟per-day
+// 六城corr:上海+0.53 巴黎+0.41 北京+0.21 倫敦+0.20 深圳−0.11 香港−0.15
+// 分歧有冇用係逐個城市唔同嘅,唔可以一刀切。
+function computeSigmaModel(complete, biasMax) {
+  const pts = [];
   for (const r of complete) {
     const vals = [];
     for (const m of MODELS) {
@@ -299,13 +313,28 @@ function computeSigmaScale(complete, biasMax) {
     const n = vals.length;
     const mu = vals.reduce((a, b) => a + b, 0) / n;
     const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / (n - 1));
-    if (sd > 0.05) zs.push((parseFloat(r.realized) - mu) / sd);
+    const err = parseFloat(r.realized) - mu;
+    if (sd > 0.05 && Number.isFinite(err)) pts.push({ sd, err });
   }
-  if (zs.length < MIN_SAMPLES * 2) return null; // 樣本太少,唔好亂改
-  const zm = zs.reduce((a, b) => a + b, 0) / zs.length;
-  const zsd = Math.sqrt(zs.reduce((a, b) => a + (b - zm) ** 2, 0) / (zs.length - 1));
-  // 夾喺合理範圍:太細會過份自信,太大會令個階梯冇資訊
-  return Math.round(Math.min(Math.max(zsd, 0.8), 4) * 100) / 100;
+  if (pts.length < MIN_SAMPLES * 2) return {}; // 樣本太少,唔好亂改
+
+  const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const sdOf = (a) => { const m = avg(a); return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / (a.length - 1)); };
+  const corr = (a, b) => {
+    const ma = avg(a), mb = avg(b);
+    const num = a.reduce((s, v, i) => s + (v - ma) * (b[i] - mb), 0);
+    const den = Math.sqrt(a.reduce((s, v) => s + (v - ma) ** 2, 0) * b.reduce((s, v) => s + (v - mb) ** 2, 0));
+    return den > 0 ? num / den : 0;
+  };
+  const r2 = (x) => Math.round(x * 100) / 100;
+
+  const zs = pts.map((p) => p.err / p.sd);
+  return {
+    // 夾喺合理範圍:太細會過份自信,太大會令個階梯冇資訊
+    sigmaScale: r2(Math.min(Math.max(sdOf(zs), 0.8), 4)),
+    sigmaAbs: r2(sdOf(pts.map((p) => p.err))),   // 常數σ = 真實誤差標準差
+    sigmaWeight: r2(Math.min(Math.max(corr(pts.map((p) => p.sd), pts.map((p) => Math.abs(p.err))), 0), 1)),
+  };
 }
 
 // ---------- forecast模式 ----------
@@ -462,7 +491,14 @@ async function settleAndWriteBias(rows) {
   const cities = { ...(oldBias.cities || {}) };
   for (const [key, cfg] of Object.entries(REMOTE_CITIES)) {
     try {
-      cities[key] = await settleRemoteCity(key, cfg);
+      const fresh = await settleRemoteCity(key, cfg);
+      // σ校準未夠樣本會回空(computeSigmaModel要20個z)。噉嘅話保留上次量到嘅值,
+      // 唔好靜靜哋倒退返做「未校準」——樣本數會因為某日缺數而上落。
+      const prev = cities[key] || {};
+      for (const k of ["sigmaScale", "sigmaAbs", "sigmaWeight"]) {
+        if (fresh[k] == null && prev[k] != null) fresh[k] = prev[k];
+      }
+      cities[key] = fresh;
     } catch (e) {
       console.log(`⚠️ ${key} settle失敗(保留舊bias): ${e.message}`);
     }
@@ -476,6 +512,14 @@ async function settleAndWriteBias(rows) {
     sampleDays: hk.sampleDays,
     note: "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
     max: hk.max,
+    // ⚠️2026-08-20:computeBias一直有計香港嘅sigmaScale,但呢個output object
+    // 冇寫落去,所以5個遠程城市全部有σ校準,得香港——即係你真係落注嗰個——
+    // 冇。dashboard讀唔到就當1,個階梯繼續過份自信(29°C成79%)。
+    // 今次跑完應該係3.4左右(std(z)=3.40,只有26%落喺±1σ內)。
+    // 樣本未夠computeSigmaModel會回空,嗰陣保留上次個值,唔好倒退返做1。
+    sigmaScale: hk.sigmaScale ?? oldBias.sigmaScale ?? null,
+    sigmaAbs: hk.sigmaAbs ?? oldBias.sigmaAbs ?? null,
+    sigmaWeight: hk.sigmaWeight ?? oldBias.sigmaWeight ?? null,
     min: {}, // 暫時只做max（Polymarket香港市場以最高溫為主）
     cities,
   };
@@ -486,6 +530,7 @@ async function settleAndWriteBias(rows) {
   } else {
     console.log("✅ bias.json已更新(香港):");
     Object.entries(hk.max).forEach(([m, b]) => console.log(`  ${m.padEnd(18)}: ${b >= 0 ? "+" : ""}${b}°C`));
+    console.log(`  σ校準: 常數${output.sigmaAbs ?? "?"}° · 倍數${output.sigmaScale ?? "?"} · per-day權重${output.sigmaWeight ?? "?"}`);
   }
   for (const [key, c] of Object.entries(cities)) {
     const n = Object.keys(c.max || {}).length;

@@ -800,6 +800,24 @@ async function getBias() {
   return biasCache.data || {};
 }
 
+// 由「模型分歧」變做「真實不確定性」。
+// cfg入面三個數由daily_log量返嚟(見daily_log.js computeSigmaModel):
+//   sigmaAbs    = 實際誤差標準差(常數σ)
+//   sigmaScale  = std(z),即係per-day σ要放闊幾多倍
+//   sigmaWeight = corr(模型σ, |誤差|),模型分歧到底有幾多per-day預測力
+// σ² = w·(rawStd×scale)² + (1−w)·sigmaAbs²
+// 香港w=0 → 直接用1.63°常數;上海w=0.53 → 一半跟當日分歧。
+// ⚠️冇量度數據(新城市/樣本未夠)就原封不動,寧願暫時過份自信都好過亂改。
+function calibratedStd(rawStd, cfg) {
+  if (!cfg) return rawStd;
+  const abs = cfg.sigmaAbs, scale = cfg.sigmaScale;
+  if (!abs && !scale) return rawStd;
+  if (!abs) return rawStd * scale;          // 舊格式bias.json(未有sigmaAbs)
+  const w = Math.min(Math.max(cfg.sigmaWeight ?? 0, 0), 1);
+  const perDay = rawStd * (scale || 1);
+  return Math.sqrt(w * perDay ** 2 + (1 - w) * abs ** 2);
+}
+
 async function pollForecast() {
   try {
     const field = METRIC === 'max' ? 'temperature_2m_max' : 'temperature_2m_min';
@@ -824,9 +842,9 @@ async function pollForecast() {
     const mean = values.reduce((a,b)=>a+b,0)/n;
     const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
     // ⚠️模型分歧量度嘅係「模型之間爭議幾多」,唔係「有幾唔準」。
-    // 實測香港std(z)=3.58——真實不確定性係模型σ嘅3.6倍,只有29%結果
-    // 落喺±1σ內(理論68%)。唔乘返呢個倍數,所有bucket機率都過份自信。
-    const std = Math.sqrt(variance) * ((await getBias()).sigmaScale || 1);
+    // 香港實際誤差std係1.63°,但模型σ平均得0.67°,而且corr(σ,|誤差|)=−0.15
+    // ——即係分歧連per-day訊號都冇。唔校準嘅話所有bucket機率都過份自信。
+    const std = calibratedStd(Math.sqrt(variance), await getBias());
     const spread = Math.max(...values) - Math.min(...values);
 
     forecastState = { mean, std, spread, low: mean - 3*std, high: mean + 3*std };
@@ -873,7 +891,7 @@ async function pollTomorrow() {
     const n = values.length;
     const mean = values.reduce((a,b)=>a+b,0)/n;
     const variance = values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1);
-    const std = Math.sqrt(variance) * ((await getBias()).sigmaScale || 1); // 同今日一樣要放闊
+    const std = calibratedStd(Math.sqrt(variance), await getBias()); // 同今日一樣要校準
     const spread = Math.max(...values) - Math.min(...values);
 
     document.getElementById('tmrMean').textContent = mean.toFixed(1)+'°';
@@ -1186,8 +1204,22 @@ async function pollCalibration() {
   try {
     const res = await fetch(CALIB_URL + '?_=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error('calib ' + res.status);
+    // ⚠️2026-08-20:daily_log由4欄(date,bucket,prob,hit)加咗marketPrice變5欄。
+    // 呢度以前寫死第4欄係hit,一加欄就讀住個空白marketPrice當hit,
+    // 成個可靠度表即刻變「0個樣本」——feedback loop靜靜哋死咗。
+    // 而家兩種格式都食得,以後再加欄都唔會再靜靜哋斷。
     const rows = (await res.text()).trim().split(/\r?\n/).slice(1)
-      .map(l => { const [date, bucket, prob, hit] = l.split(','); return { date, prob: parseFloat(prob), hit }; })
+      .map(l => {
+        const c = l.split(',');
+        const wide = c.length >= 5;
+        return {
+          date: c[0],
+          prob: parseFloat(c[2]),
+          // ⚠️CSV入面個市價係「仙」(0-100),prob係分數(0-1)。要除100先可比。
+          market: wide ? parseFloat(c[3]) / 100 : NaN,
+          hit: (wide ? c[4] : c[3] || '').trim(),
+        };
+      })
       .filter(r => r.hit === '1' || r.hit === '0');
 
     const days = new Set(rows.map(r => r.date)).size;
@@ -1215,6 +1247,21 @@ async function pollCalibration() {
         `<span class="edge-val ${cls}">${verdict}</span>`;
       el.appendChild(row);
     }
+    // 模型 vs 市場(Brier分,越細越準)——同時有模型%同市場價嗰啲樣本先算得
+    const duel = rows.filter(r => Number.isFinite(r.market));
+    if (duel.length >= 10) {
+      const brier = (get) => duel.reduce((a, r) => a + (get(r) - (r.hit === '1' ? 1 : 0)) ** 2, 0) / duel.length;
+      const bm = brier(r => r.prob), bk = brier(r => r.market);
+      const win = bm < bk;
+      const row = document.createElement('div');
+      row.className = 'edge-row';
+      row.innerHTML =
+        `<span class="edge-label">vs市場</span>` +
+        `<span class="edge-nums">模型${bm.toFixed(3)} / 市場${bk.toFixed(3)} (n=${duel.length})</span>` +
+        `<span class="edge-val ${win ? 'edge-pos' : 'edge-neg'}">${win ? '✓贏' : '✗輸'}</span>`;
+      el.appendChild(row);
+    }
+
     if (!el.children.length) el.innerHTML = '<div class="edge-row"><span class="edge-flat">每個機率區間樣本都未夠3個</span></div>';
   } catch (e) {
     el.innerHTML = `<div class="edge-row"><span class="edge-flat">可靠度數據未有(要等daily_log累積)</span></div>`;
@@ -1368,8 +1415,11 @@ async function pollCnCity() {
     std = Math.max(std, unit === 'F' ? 0.9 : 0.5);
     // 有實測σ校準就用返佢(每個城市唔同:機場站準啲、市區站差好遠);
     // 未夠數據先用寫死嘅×1.4做fallback
-    const sScale = cb?.sigmaScale;
-    std *= sScale || (cityBias ? 1 : 1.4);
+    // ⚠️sigmaAbs係用°C量返嚟嘅,倫敦°F市場要換算(×1.8),唔係會過份自信一半
+    const cfg = cb && (cb.sigmaAbs || cb.sigmaScale)
+      ? { ...cb, sigmaAbs: cb.sigmaAbs ? cb.sigmaAbs * (unit === 'F' ? 1.8 : 1) : null }
+      : null;
+    std = cfg ? calibratedStd(std, cfg) : std * (cityBias ? 1 : 1.4);
 
     document.getElementById('cnMean').textContent = mean.toFixed(1)+'°';
     document.getElementById('cnStd').textContent = std.toFixed(1)+'°';

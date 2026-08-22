@@ -9,11 +9,11 @@
   "pulledBackAlerted": false,
   "lastWarnCodes": "",
   "edgeAlerted": {
-    "27°C": -65,
+    "27°C": -89,
     "29°C": 24,
     "30°C": 42,
     "31°C": 31,
-    "26°C": -25
+    "26°C": -12
   },
   "fastAlerted": [
     29

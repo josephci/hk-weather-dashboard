@@ -9,7 +9,7 @@
   ],
   "approachAlerted": 32,
   "pulledBackAlerted": true,
-  "lastWarnCodes": "WTS",
+  "lastWarnCodes": "",
   "edgeAlerted": {
     "27°C": -98,
     "31°C": 93

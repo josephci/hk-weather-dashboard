@@ -808,6 +808,37 @@ async function getBias() {
 // σ² = w·(rawStd×scale)² + (1−w)·sigmaAbs²
 // 香港w=0 → 直接用1.63°常數;上海w=0.53 → 一半跟當日分歧。
 // ⚠️冇量度數據(新城市/樣本未夠)就原封不動,寧願暫時過份自信都好過亂改。
+// 顯示機率:個模型永遠唔應該講「100%」。
+// ⚠️2026-08-22:16:51實測max 31.8°,今日階梯顯示「31°C 100%」,而市場係99¢
+// ——個+1% edge純粹係四捨五入砌出嚟。99.8%同100%對落注嘅意思完全唔同:
+// 100%即係「唔使諗」,99.8%即係「500次會錯一次」。而個模型根本冇資格
+// 講100%:HKO官方max同我哋讀嘅1分鐘CSV可以唔同、夜晚都試過反彈。
+// 呢個panel自己都留咗3%殘餘俾超上限嘅格「唔敢講死」,顯示嗰陣就唔好講死。
+// 「⚠分歧較大」應唔應該出?
+// ⚠️2026-08-22:量到香港 corr(模型σ, |實際誤差|) = −0.15,即係分歧大嘅日
+// 唔會錯得多(仲要輕微相反)。而家σ已經改用常數1.62°,分歧根本冇influence
+// 到下面任何一個%。噉樣仲掛住個⚠,就係叫你喺唔應該驚嘅日驚——
+// 對埋一個唔會變嘅階梯睇,只會蠶食你對成個panel嘅信任。
+// sigmaWeight就係嗰個corr:>0.15先當分歧有訊號,先好出warning。
+function spreadFlagText(spread, cfg, thresh) {
+  const w = cfg?.sigmaWeight;
+  if (w !== undefined && w !== null && w <= 0.15) return '';
+  return spread >= thresh ? '⚠ 分歧較大' : '';
+}
+
+function pctText(p) {
+  const v = p * 100;
+  if (v >= 99.5) return '>99%';
+  if (v > 0 && v < 0.5) return '<1%';
+  return v.toFixed(0) + '%';
+}
+
+// 計edge嗰陣一樣要封頂:模型100%減市場99¢=+1%,係四捨五入砌出嚟嘅假edge。
+// 封到99之後同一個情況變 99−99 = 0,唔會再引你去追嗰1¢。
+// ⚠️只封上唔封落:低格顯示0%通常係「實測max已經升穿咗」——嗰個係已發生
+// 嘅事實,唔係預測,冇理由當佢有1%。上面嗰邊冇對稱嘅事實支持(溫度仲可以升)。
+function clampPct(p) { return Math.min(Math.round(p * 100), 99); }
+
 function calibratedStd(rawStd, cfg) {
   if (!cfg) return rawStd;
   const abs = cfg.sigmaAbs, scale = cfg.sigmaScale;
@@ -900,7 +931,7 @@ async function pollTomorrow() {
 
     const [y, m, d] = dateStr.split('-');
     document.getElementById('tomorrowTitle').textContent =
-      `明日（${parseInt(m)}月${parseInt(d)}日）高溫預測 · ${n}模型` + (spread >= 1 ? ' ⚠分歧較大' : '');
+      `明日（${parseInt(m)}月${parseInt(d)}日）高溫預測 · ${n}模型` + spreadFlagText(spread, await getBias(), 1);
 
     // 完整機率分佈：顯示所有 >=2% 嘅bucket（唔止3個，方便你對照Polymarket成張表）
     const range = Math.max(4*std, 3);
@@ -920,7 +951,7 @@ async function pollTomorrow() {
       item.innerHTML = `
         <span class="ladder-range">${b.low}°C</span>
         <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>
-        <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
+        <span class="ladder-prob">${pctText(b.prob)}</span>
       `;
       listEl.appendChild(item);
     });
@@ -1071,7 +1102,7 @@ function renderForecast() {
   document.getElementById('gaugeHi').textContent = high.toFixed(0)+'°';
 
   const flagEl = document.getElementById('spreadFlag');
-  flagEl.textContent = spread >= 1 ? '⚠ 分歧較大' : '';
+  flagEl.textContent = spreadFlagText(spread, biasCache.data, 1);
 
   const { buckets, conditioned, rainAdjusted, modelBeaten } = computeBuckets();
   if (buckets.length === 0) return;
@@ -1107,7 +1138,7 @@ function renderForecast() {
     item.innerHTML = `
       <span class="ladder-range">${b.low}°C</span>
       <div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${maxProb > 0 ? (b.prob/maxProb*100).toFixed(0) : 0}%"></div></div>
-      <span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>
+      <span class="ladder-prob">${pctText(b.prob)}</span>
     `;
     listEl.appendChild(item);
   });
@@ -1293,7 +1324,7 @@ function renderEdgeList(elId, buckets, probs, unit = 'C') {
   for (const b of buckets) {
     const mp = bucketProbFromMap(b.label, probs);
     if (mp === null) continue;
-    const modelPct = Math.round(mp * 100);
+    const modelPct = clampPct(mp);   // 唔可以出100%/0%,見pctText註解
 
     // °F label加°C提示,方便對照
     let labelHtml = esc(b.label);
@@ -1426,7 +1457,7 @@ async function pollCnCity() {
     document.getElementById('cnSpread').textContent = spread.toFixed(1)+'°';
     document.getElementById('cnTomorrowTitle').textContent =
       `今日高溫預測 · ${n}模型（${cityBias ? `✓已校正${cb.sampleDays}日` : '未校正'}${unit === 'F' ? ' · °F市場' : ''}）` +
-      (spread >= (unit === 'F' ? 2.7 : 1.5) ? ' ⚠分歧較大' : '');
+      spreadFlagText(spread, cb, unit === 'F' ? 2.7 : 1.5);
     document.getElementById('cnBiasNote').textContent = cityBias
       ? `已用${cb.sampleDays}日「模型vs METAR實測」紀錄做bias校正(daily_log自動累積,越多日越準)`
       : `「未校正」= 呢個城市bias紀錄未夠7日(daily_log累積緊),已用std×1.4放大補償,edge要打七折看待`;
@@ -1448,7 +1479,7 @@ async function pollCnCity() {
       item.innerHTML =
         `<span class="ladder-range">${b.low}°${unit}${unit === 'F' ? `<span style="font-size:11px;color:var(--muted);"> ${fToC(b.low)}°C</span>` : ''}</span>` +
         `<div class="ladder-bar-track"><div class="ladder-bar-fill" style="width:${(b.prob/maxProb*100).toFixed(0)}%"></div></div>` +
-        `<span class="ladder-prob">${(b.prob*100).toFixed(0)}%</span>`;
+        `<span class="ladder-prob">${pctText(b.prob)}</span>`;
       listEl.appendChild(item);
     });
     cnModelProbs = probs;
@@ -1673,6 +1704,7 @@ function renderLocksCn() {
 
 function computeLocks(buckets, realizedMax) {
   const locks = [];
+  const priced = [];   // 已經贏緊但個價冇肉食嘅bucket
   const fb = Math.floor(realizedMax);
   for (const b of buckets) {
     const t = b.label.toLowerCase();
@@ -1684,7 +1716,13 @@ function computeLocks(buckets, realizedMax) {
 
     // 0¢/100¢=未有流動性嘅假價,3-97¢先當有效報價(兩邊都要買到先算機會)
     const quoted = b.yesPrice >= 3 && b.yesPrice <= 97;
-    if (!quoted) continue;
+    if (!quoted) {
+      // 記低「其實鎖咗、但個價已經冇肉食」——同「完全冇鎖定」係兩件事,
+      // 唔分開講嘅話個panel會令你以為系統乜都搵唔到(2026-08-22截圖:
+      // 實測31.8°、market 31°C報99¢,panel卻寫「暫時冇鎖定機會,等溫度爬升」)
+      if (b.yesPrice > 97 && fb >= deg && fb <= hiDeg) priced.push(b.label);
+      continue;
+    }
 
     if (t.includes('higher') || t.includes('above')) {
       // 已實現max>=N → YES結果已確定
@@ -1711,6 +1749,7 @@ function computeLocks(buckets, realizedMax) {
     }
   }
   locks.sort((a, b) => (b.sure - a.sure) || (b.profit - a.profit));
+  locks.priced = priced;
   return locks;
 }
 
@@ -1723,7 +1762,13 @@ function renderLocks(elId, buckets, realizedMax) {
   }
   const locks = computeLocks(buckets, realizedMax);
   if (!locks.length) {
-    el.innerHTML = `<div class="edge-row"><span class="edge-flat">暫時冇鎖定機會(實現max ${realizedMax}°,等溫度爬升)</span></div>`;
+    // 「冇鎖定」有兩個好唔同嘅原因,唔可以用同一句交代:
+    //   ① 市場已經price晒 → 系統搵到,但≥98¢冇肉食(呢個係常態,唔係壞事)
+    //   ② 真係未有格鎖到 → 等溫度爬升
+    const msg = locks.priced?.length
+      ? `已鎖但冇肉食:${locks.priced.join('、')} 已經 98¢+(實現max ${realizedMax}°)`
+      : `暫時冇鎖定機會(實現max ${realizedMax}°,等溫度爬升)`;
+    el.innerHTML = `<div class="edge-row"><span class="edge-flat">${esc(msg)}</span></div>`;
     return;
   }
   el.innerHTML = '';

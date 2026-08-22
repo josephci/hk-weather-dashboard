@@ -146,6 +146,23 @@ function checkFeedbackLoop(problems, notes) {
     } else {
       notes.push(`可靠度樣本 ${settled}個(${body.length}行)`);
     }
+
+    // 市價欄有冇真係入到數。2026-08-22:呢欄開咗10日,92行一格都冇記到——
+    // 因為去攞價嗰班喺香港07:15跑,但香港market下晝先開盤。
+    // 冇錯誤訊息、個log照寫、「模型vs市場」就係永遠出唔到。
+    const wide = body.filter((l) => l.split(",").length >= 5);
+    if (wide.length >= 25) {
+      const withPrice = wide.filter((l) => (l.split(",")[3] || "").trim() !== "").length;
+      const recent = wide.slice(-30);
+      const recentPrice = recent.filter((l) => (l.split(",")[3] || "").trim() !== "").length;
+      if (withPrice === 0) {
+        problems.push(`calibration_log ${wide.length}行一個市價都冇——market班攞唔到價(市場未開盤?slug變咗?),「模型vs市場」永遠出唔到`);
+      } else if (recentPrice === 0) {
+        problems.push("calibration_log最近30行冇市價——market班近排一直攞唔到價");
+      } else {
+        notes.push(`市價已記 ${withPrice}格(最近30行有${recentPrice}格)`);
+      }
+    }
   } catch {
     notes.push("calibration_log未存在(daily_log未跑過settle)");
   }

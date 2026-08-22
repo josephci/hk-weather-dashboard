@@ -565,11 +565,44 @@ async function settleRemoteCity(key, cfg) {
   return computeBias(rows);
 }
 
+// ---------- market模式:補返今日嘅市價 ----------
+//
+// ⚠️2026-08-22發現:市價欄開咗10日,一格都冇記到(92行全部空白)。
+// 原因係 recordCalibForecast 喺 forecast 班跑,即係香港07:15——
+// 但香港market通常當日下晝先開盤(dashboard自己都寫住「聽日market未開
+// (通常當日下晝先開盤)」)。7點鐘去攞,個event根本未存在,永遠攞唔到。
+// 所以「模型vs市場」呢個對比由開波嗰日起就係死嘅,而冇任何錯誤訊息。
+//
+// 做法:另開一班喺香港下晝跑,淨係填返今日仲係空白嗰啲格。
+// 已經有價嘅唔會覆蓋——要保住「最早攞到嗰個報價」,愈早嘅報價
+// 資訊優勢愈細,同模型(07:15出)比先公道。
+async function runMarketSnapshot() {
+  const date = hkToday();
+  const rows = loadCalib();
+  const todays = rows.filter((r) => r.date === date);
+  if (!todays.length) { console.log(`ℹ️ ${date} 未有校準快照,冇嘢好補(forecast班未跑?)`); return; }
+
+  const blank = todays.filter((r) => r.marketPrice === "" || r.marketPrice === undefined);
+  if (!blank.length) { console.log(`✓ ${date} ${todays.length}個bucket已經全部有市價`); return; }
+
+  const prices = await fetchHkMarketPrices(date);
+  if (!Object.keys(prices).length) { console.log(`ℹ️ ${date} market未開盤/攞唔到價,下一班再試`); return; }
+
+  let filled = 0;
+  for (const r of blank) {
+    if (prices[r.bucket] !== undefined) { r.marketPrice = prices[r.bucket]; filled++; }
+  }
+  if (!filled) { console.log(`ℹ️ market有開,但冇一格對得上(bucket格式變咗?)`); return; }
+  saveCalib(rows);
+  console.log(`✅ ${date} 補到 ${filled}/${blank.length} 個bucket嘅市價`);
+}
+
 async function main() {
   const { mode } = parseArgs();
   if (mode === "forecast") await runForecast();
   else if (mode === "settle") await runSettle();
-  else throw new Error("要指定 --mode=forecast 或 --mode=settle");
+  else if (mode === "market") await runMarketSnapshot();
+  else throw new Error("要指定 --mode=forecast / settle / market");
 }
 
 main().catch((err) => {

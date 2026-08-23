@@ -156,7 +156,7 @@ function checkFeedbackLoop(problems, notes) {
       const recent = wide.slice(-30);
       const recentPrice = recent.filter((l) => (l.split(",")[3] || "").trim() !== "").length;
       if (withPrice === 0) {
-        problems.push(`calibration_log ${wide.length}行一個市價都冇——market班攞唔到價(市場未開盤?slug變咗?),「模型vs市場」永遠出唔到`);
+        problems.push(`calibration_log ${wide.length}行一個市價都冇——「模型vs市場」永遠出唔到。開Actions睇market班個log,佢會print返係API唔通/slug miss/定label對唔上`);
       } else if (recentPrice === 0) {
         problems.push("calibration_log最近30行冇市價——market班近排一直攞唔到價");
       } else {

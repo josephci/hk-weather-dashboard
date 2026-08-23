@@ -10,6 +10,9 @@
   "approachAlerted": null,
   "pulledBackAlerted": true,
   "lastWarnCodes": "WTS",
-  "edgeAlerted": {},
+  "edgeAlerted": {
+    "28°C": -88,
+    "31°C or higher": 100
+  },
   "fastAlerted": []
 }

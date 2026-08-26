@@ -39,6 +39,13 @@
 唔係驗個檔存唔存在,係**照consumer嘅規矩讀一次,睇讀唔讀到嘢**。
 呢個repo已經有幾次係「加咗個check先至知一路都壞緊」。
 
+### 一句分唔清死因嘅log,本身就係bug
+
+市價班寫住「市場未開盤/攞唔到價」,一句冚晒三個完全唔同嘅死因:
+API唔通、slug格式變咗、bucket label變咗。結果查咗成日先知係slug miss。
+**Error message要print到證據**——status code、試過嘅slug、攞返嚟幾多個event、
+見到嘅label係乜。分唔到「未開」同「格式變咗」就等於冇log。
+
 ## 落結論之前一定要用真數據跑
 
 唔好靠睇code推論。呢個project每一個真發現都係跑數跑返嚟嘅,

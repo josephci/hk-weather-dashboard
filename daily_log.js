@@ -107,13 +107,38 @@ function saveCalib(rows) {
 // 記低今朝個機率分佈(用同dashboard一樣嘅口徑:6模型+bias,未條件化)
 // 攞當日香港market每個整數bucket嘅價(用嚟同模型對數)
 const CALIB_MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+// ⚠️2026-08-23:呢度本來淨係試slug,一miss就靜靜哋回{}。
+// 但 functions/api/polymarket.js(dashboard行嗰條)一早就有個title fallback,
+// 佢自己個comment寫住「slug命中唔到→掃weather tag用title配對(應對slug
+// 格式唔同嘅城市)」——即係作者早就知slug會miss。兩條路唔同步,
+// 結果係dashboard 16:51見到31°C@99¢,但market班16:19乜都攞唔到。
+// ⚠️改呢個function嘅時候,functions/api/polymarket.js同netlify嗰份要一齊改。
 async function fetchHkMarketPrices(date) {
   const [, m, d] = date.split("-").map(Number);
   const slug = `highest-temperature-in-hong-kong-on-${CALIB_MONTHS[m - 1]}-${d}`;
   const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
-  if (!res.ok) return {};
-  const ev = (await res.json())?.[0];
-  if (!ev) return {};
+  if (!res.ok) { console.log(`  ⚠️ Gamma API ${res.status}(slug=${slug})`); return {}; }
+  let ev = (await res.json())?.[0];
+
+  if (!ev) {
+    // slug miss → 掃weather tag用title配對(同Pages Function一模一樣嘅fallback)
+    const res2 = await fetch("https://gamma-api.polymarket.com/events?closed=false&limit=200&tag_slug=weather");
+    if (!res2.ok) { console.log(`  ⚠️ slug miss(${slug}),weather tag又 ${res2.status}`); return {}; }
+    const all = await res2.json();
+    const list = Array.isArray(all) ? all : [];
+    const titleRe = new RegExp(`highest temperature in hong kong on ${CALIB_MONTHS[m - 1]} ${d}\\b`, "i");
+    ev = list.find((e) => titleRe.test(e.title || "")) || null;
+    if (!ev) {
+      // ⚠️唔好淨係講「攞唔到」——分唔清「市場未開」定「slug/title格式變咗」,
+      // 就會好似今次咁,一句模糊嘅log拖足一日先查得出。print返證據。
+      const hk = list.filter((e) => /hong kong/i.test(e.title || "")).map((e) => e.slug);
+      console.log(`  ⚠️ slug miss(${slug}),weather tag ${list.length}個event都配唔到title`);
+      console.log(hk.length ? `     tag入面香港嘅event: ${hk.slice(0, 5).join(", ")}` : "     tag入面完全冇香港event(可能真係未開盤)");
+      return {};
+    }
+    console.log(`  ℹ️ slug miss,靠title fallback搵到: ${ev.slug}`);
+  }
+
   const out = {};
   for (const mkt of ev.markets || []) {
     const label = (mkt.groupItemTitle || mkt.question || "").trim().toLowerCase();
@@ -125,6 +150,12 @@ async function fetchHkMarketPrices(date) {
       const p = JSON.parse(mkt.outcomePrices || "[]");
       if (p[0] !== undefined) out[parseInt(num[1], 10)] = Math.round(parseFloat(p[0]) * 100);
     } catch { /* ignore */ }
+  }
+  // 搵到個event但一格都對唔上=bucket label格式變咗,同「未開盤」係兩件事
+  if (!Object.keys(out).length) {
+    const labels = (ev.markets || []).map((x) => (x.groupItemTitle || x.question || "").trim()).filter(Boolean);
+    console.log(`  ⚠️ 搵到event(${ev.slug})但冇一格對得上單一整數bucket`);
+    console.log(`     見到嘅label: ${labels.slice(0, 8).join(" | ") || "(冇)"}`);
   }
   return out;
 }

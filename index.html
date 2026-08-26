@@ -324,6 +324,27 @@
   .edge-neg { color: var(--warm); }
   .edge-flat { color: var(--muted); font-weight: 400; }
   a.market-link { color: var(--brass); text-decoration: none; font-size: 13px; }
+
+  /* ---- Polymarket健康狀態 ---- */
+  /* 平時要細、要靜(一切正常唔應該霸位);出事就要撐開、要嘈 */
+  .pm-status {
+    margin: 0 0 12px; padding: 9px 12px;
+    border: 1px solid var(--panel-border); border-radius: 10px;
+    background: var(--panel); font-size: 12.5px;
+  }
+  .pm-status.bad { border-color: var(--warm); background: rgba(224,122,95,.09); }
+  .pm-status.warn { border-color: #E0C24A; background: rgba(224,194,74,.08); }
+  .pm-line { display: flex; align-items: center; gap: 8px; }
+  .pm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .pm-dot.ok { background: #6FCF97; }
+  .pm-dot.warn { background: #E0C24A; }
+  .pm-dot.bad { background: var(--warm); }
+  .pm-head { flex: 1; font-weight: 600; }
+  .pm-lat { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .pm-item { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--panel-border); line-height: 1.5; }
+  .pm-item b { color: var(--warm); font-weight: 700; }
+  .pm-when { font-family: var(--mono); font-size: 11px; color: var(--muted); display: block; margin-top: 2px; }
+  .pm-note { color: var(--muted); line-height: 1.5; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -344,6 +365,18 @@
     <button class="city-tab" data-city="paris">巴黎</button>
     <button class="city-tab" data-city="shenzhen">深圳</button>
   </div>
+
+  <!-- Polymarket健康狀態:平時縮成一行,有事先撐開。
+       ⚠️2026-08-24加:Polymarket down嗰陣,個dashboard淨係寫「今日market未搵到」,
+       同「未開盤」「slug變咗」一模一樣,搞到分唔清係人哋down咗定自己壞咗。 -->
+  <section class="pm-status" id="pmStatus">
+    <div class="pm-line">
+      <span class="pm-dot" id="pmDot"></span>
+      <span class="pm-head" id="pmHead">Polymarket 狀態檢查中…</span>
+      <span class="pm-lat" id="pmLat"></span>
+    </div>
+    <div id="pmDetail"></div>
+  </section>
 
   <div id="view-hk" style="display:contents;">
 
@@ -550,6 +583,7 @@ const BIAS_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboar
 const HISTORY_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/data/history.csv";
 const CALIB_URL = "https://raw.githubusercontent.com/josephci/hk-weather-dashboard/main/calibration_log.csv";
 const PM_ENDPOINT = "/api/polymarket";
+const PMSTATUS_ENDPOINT = "/api/pmstatus";
 
 // 非香港城市設定（結算站=機場座標）
 const REMOTE_CITIES = {
@@ -974,7 +1008,7 @@ async function pollEdgeTomorrow(probs) {
     const pm = await res.json();
     const link = document.getElementById('marketLinkTmr');
     if (!pm.found) {
-      el.innerHTML = '<div class="edge-row"><span class="edge-flat">聽日market未開(通常當日下晝先開盤)</span></div>';
+      el.innerHTML = `<div class="edge-row"><span class="edge-flat">聽日market未開(通常當日下晝先開盤)${esc(pmDownNote())}</span></div>`;
       link.textContent = '';
       return;
     }
@@ -1230,6 +1264,111 @@ async function pollTrend() {
 // 🎯 模型可靠度:讀calibration_log.csv,答「話X%嗰啲實際中幾多%」
 // 呢個係全個系統唯一嘅feedback loop——冇佢,所有edge都係憑感覺信
 // ============================================================
+// ============================================================
+// 🩺 Polymarket健康狀態
+// 答:而家搞唔掂,係人哋down咗定係我自己出事?
+// ⚠️2026-08-24:用戶撞正Polymarket down連交易都做唔到,個dashboard
+// 就淨係寫「今日market未搵到」——同「未開盤」「slug變咗」同一句。
+// 分唔清就等於冇提示,仲會令人去查錯方向。
+// ============================================================
+let pmHealth = null;   // 俾edge panel借嚟解釋點解攞唔到市場
+
+// 幾時維護:statuspage回UTC ISO,轉做香港時間先講得出「幾點」
+function hkTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const p = (n) => String(n).padStart(2, '0');
+  const hk = new Date(d.getTime() + 8 * 3600e3);
+  return `${hk.getUTCMonth() + 1}月${hk.getUTCDate()}日 ${p(hk.getUTCHours())}:${p(hk.getUTCMinutes())}`;
+}
+
+function pmWhen(from, until) {
+  const a = hkTime(from), b = hkTime(until);
+  if (!a) return b ? `香港時間 ${b} 完` : '';
+  return b ? `香港時間 ${a} → ${b}` : `香港時間 ${a} 開始`;
+}
+
+async function pollPmStatus() {
+  const sec = document.getElementById('pmStatus');
+  const dot = document.getElementById('pmDot');
+  const head = document.getElementById('pmHead');
+  const lat = document.getElementById('pmLat');
+  const det = document.getElementById('pmDetail');
+  try {
+    const res = await fetch(PMSTATUS_ENDPOINT + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('狀態API ' + res.status);
+    const s = await res.json();
+    pmHealth = s;
+
+    const gamma = s.api?.gamma, clob = s.api?.clob;
+    const inc = s.page?.incidents || [];
+    const mnt = s.page?.maintenances || [];
+    const nowMnt = mnt.filter(m => m.status === 'in_progress');
+
+    // ⚠️維護要排喺「API死咗」之前講。維護緊嗰陣clob一定唔通,
+    // 如果淨係報「交易API唔通」,就係報咗個症狀、藏起個原因同「幾時完」
+    // ——同呢個repo一路要修嗰種「一句log冚晒幾個死因」係同一個病。
+    // ⚠️永遠唔會因為「讀唔到」而畫綠燈——讀唔到就講唔知。
+    let level = 'ok', title = 'Polymarket 正常';
+    if (nowMnt.length) {
+      const until = hkTime(nowMnt[0].scheduledUntil);
+      level = (clob && !clob.ok) ? 'bad' : 'warn';
+      title = `🔧 Polymarket 維護緊${clob && !clob.ok ? '(交易停)' : ''}` + (until ? ` · 預計${until}完` : '');
+    }
+    else if (clob && !clob.ok && gamma && !gamma.ok) { level = 'bad'; title = '⚠️ Polymarket 數據同交易都連唔到'; }
+    else if (clob && !clob.ok) { level = 'bad'; title = '⚠️ 交易API唔通(落唔到單)'; }
+    else if (gamma && !gamma.ok) { level = 'bad'; title = '⚠️ 市場數據API唔通(下面啲價會空白)'; }
+    else if (inc.length) { level = 'warn'; title = '⚠️ Polymarket 有事故'; }
+    else if (s.page?.indicator && s.page.indicator !== 'none') { level = 'warn'; title = `⚠️ ${s.page.description || 'Polymarket 狀態異常'}`; }
+    else if (mnt.length) { level = 'ok'; title = 'Polymarket 正常(有排期維護)'; }
+    else if (!s.page && s.pageError) { level = 'ok'; title = 'Polymarket API通(官方狀態頁讀唔到)'; }
+
+    sec.className = 'pm-status' + (level === 'ok' ? '' : ' ' + level);
+    dot.className = 'pm-dot ' + level;
+    head.textContent = title;
+    const part = (n, x) => x ? `${n}${x.ok ? x.ms + 'ms' : '✗'}` : '';
+    lat.textContent = [part('數據 ', gamma), part('交易 ', clob)].filter(Boolean).join(' · ');
+
+    // 細節:有事先寫。正常嘅日子淨係一行,唔好霸位
+    const rows = [];
+    for (const m of nowMnt.concat(mnt.filter(x => x.status !== 'in_progress'))) {
+      rows.push(`<div class="pm-item">🔧 <b>${esc(m.name)}</b>${m.status === 'in_progress' ? '（進行緊）' : '（未開始）'}
+        <span class="pm-when">${esc(pmWhen(m.scheduledFor, m.scheduledUntil))}</span></div>`);
+    }
+    for (const i of inc) {
+      rows.push(`<div class="pm-item">⚠️ <b>${esc(i.name)}</b>（${esc(i.impact || '')}${esc(i.status || '')}）
+        ${i.body ? `<span class="pm-when">${esc(i.body)}</span>` : ''}</div>`);
+    }
+    for (const c of (s.page?.degraded || [])) {
+      rows.push(`<div class="pm-item">🔻 ${esc(c.name)}：${esc(c.status)}</div>`);
+    }
+    if (gamma && !gamma.ok) rows.push(`<div class="pm-item">市場數據(gamma)：${esc(gamma.detail || '連唔到')}</div>`);
+    if (clob && !clob.ok) rows.push(`<div class="pm-item">交易(clob)：${esc(clob.detail || '連唔到')}</div>`);
+    if (s.pageError && (level !== 'ok')) rows.push(`<div class="pm-note">官方狀態頁：${esc(s.pageError)}</div>`);
+    // ⚠️唔好講「你落到單」——呢度只證明API應機,落單仲要簽名同錢包
+    if (clob?.ok && level !== 'ok') rows.push('<div class="pm-note">交易API應機唔等於你落到單(仲要睇錢包/簽名)。</div>');
+    det.innerHTML = rows.join('');
+  } catch (e) {
+    // 我哋自己個function死咗,同Polymarket死咗係兩件事,唔可以扮綠燈
+    pmHealth = null;
+    sec.className = 'pm-status';
+    dot.className = 'pm-dot';
+    head.textContent = 'Polymarket 狀態查唔到';
+    lat.textContent = '';
+    det.innerHTML = `<div class="pm-note">${esc(e.message)}——查唔到唔代表冇事,亦唔代表有事。</div>`;
+  }
+}
+
+// 市場攞唔到嗰陣,俾個panel補一句「係人哋down定係未開盤」
+function pmDownNote() {
+  if (!pmHealth) return '';
+  if (pmHealth.api?.gamma && !pmHealth.api.gamma.ok) return '（Polymarket數據API而家唔通,唔關你事）';
+  if ((pmHealth.page?.maintenances || []).some(m => m.status === 'in_progress')) return '（Polymarket維護緊）';
+  if ((pmHealth.page?.incidents || []).length) return '（Polymarket有事故進行緊）';
+  return '';
+}
+
 async function pollCalibration() {
   const el = document.getElementById('calibList');
   try {
@@ -1360,7 +1499,7 @@ async function pollEdgeHk() {
   try {
     const res = await fetch(`${PM_ENDPOINT}?city=hong-kong`, { cache: 'no-store' });
     const pm = await res.json();
-    if (!pm.found) { document.getElementById('edgeListHk').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>'; return; }
+    if (!pm.found) { document.getElementById('edgeListHk').innerHTML = `<div class="edge-row"><span class="edge-flat">今日market未搵到${esc(pmDownNote())}</span></div>`; return; }
 
     hkPmBuckets = pm.buckets;
     renderLocks('lockListHk', hkPmBuckets, todayMaxRealized);
@@ -1491,7 +1630,7 @@ async function pollCnCity() {
       link.href = pm.url; link.textContent = '👉 ' + pm.title;
       cnPmBuckets = pm.buckets;
     } else {
-      document.getElementById('edgeListCn').innerHTML = '<div class="edge-row"><span class="edge-flat">今日market未搵到</span></div>';
+      document.getElementById('edgeListCn').innerHTML = `<div class="edge-row"><span class="edge-flat">今日market未搵到${esc(pmDownNote())}</span></div>`;
       cnPmBuckets = null;
     }
     renderLocksCn();
@@ -1757,7 +1896,7 @@ function renderLocks(elId, buckets, realizedMax) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (!buckets || !buckets.length || realizedMax === null) {
-    el.innerHTML = '<div class="edge-row"><span class="edge-flat">等緊market/實測數據…</span></div>';
+    el.innerHTML = `<div class="edge-row"><span class="edge-flat">等緊market/實測數據…${esc(pmDownNote())}</span></div>`;
     return;
   }
   const locks = computeLocks(buckets, realizedMax);
@@ -1905,7 +2044,7 @@ function tickClock() {
 setInterval(tickClock, 1000); tickClock();
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
-  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk(); pollCalibration();
+  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk(); pollCalibration(); pollPmStatus();
   if (REMOTE_CITIES[currentCity]) pollCnCity();
 });
 
@@ -1922,6 +2061,9 @@ pollTomorrow();
 pollTrend();
 pollCalibration();
 setInterval(whenVisible(pollCalibration), 60 * 60_000); // 一日先更新一次,一個鐘睇一次夠曬
+// Polymarket健康:要早過edge panel跑,噉市場攞唔到嗰陣先解釋得到點解
+pollPmStatus();
+setInterval(whenVisible(pollPmStatus), 2 * 60_000);
 setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
 setInterval(whenVisible(pollLive), LIVE_POLL_MS);
 setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);
@@ -1939,7 +2081,7 @@ document.addEventListener('visibilitychange', () => {
     // 唔等各自interval(以前預測嗰啲要等最耐15分鐘先自己更新→「唔係最新數據」)
     const staleResume = Date.now() - lastActivePoll > 2 * 60_000;
     lastActivePoll = Date.now();
-    pollLive(); pollEdgeHk();
+    pollLive(); pollEdgeHk(); pollPmStatus();
     if (REMOTE_CITIES[currentCity]) pollCnCity();
     if (staleResume) {
       pollForecast(); pollTomorrow(); pollTrend(); fetchOmHourly();

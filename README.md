@@ -324,6 +324,53 @@ Dashboard 讀唔到就當1，個階梯繼續過份自信（29°C 報 79%）。
 註：🔒鎖定策略**唔受影響**——佢完全唔用模型機率，只用已實現事實。
 呢個亦係點解紙上交易由鎖定策略開始係啱嘅。
 
+## 🩺 Polymarket 健康狀態（`/api/pmstatus`）
+
+**2026-08-24 加**：Polymarket down 咗，連交易都做唔到，但個 dashboard 淨係寫
+「今日market未搵到」—— 同「市場未開盤」「slug變咗」一模一樣嘅一句。
+分唔清係人哋 down 咗定自己壞咗，就會去查錯方向。
+
+個 endpoint 分開探三樣，**唔夾埋一齊報**：
+
+| 探邊個 | 答到咩 |
+|---|---|
+| `status.polymarket.com` (Statuspage v2) | 總體狀態、進行中事故、**維護窗口（幾時開始／幾時完）** |
+| `gamma-api` | 市場數據 —— dashboard 啲價、edge、鎖定全部靠佢 |
+| `clob` | **交易 API** —— 落單、order book |
+
+**②③ 一定要分開探**：見過好多次數據 API 正常但交易 API 死，
+個網睇落乜事都冇，但你就係落唔到單。
+
+頭條排序（**維護排喺 API 死咗之前**）：
+
+```
+🔧 Polymarket 維護緊(交易停) · 預計8月25日 04:00完     ← 維護緊 + 交易停
+🔧 Polymarket 維護緊 · 預計8月25日 04:00完            ← 維護緊但交易仲通
+⚠️ Polymarket 數據同交易都連唔到
+⚠️ 交易API唔通(落唔到單)
+⚠️ 市場數據API唔通(下面啲價會空白)
+⚠️ Polymarket 有事故
+Polymarket 正常(有排期維護)
+Polymarket API通(官方狀態頁讀唔到)                    ← 唔會扮綠燈，亦唔會扮有事
+Polymarket 正常
+```
+
+維護緊嘅時候 clob 一定唔通。如果照排「交易API唔通」喺前面，
+就係**報咗個症狀、藏起個原因同「幾時完」**—— 同呢個 repo 一路要修
+嗰種「一句 log 冚晒幾個死因」係同一個病。
+
+其他原則：
+
+- **永遠唔會 default 做綠燈。** 狀態頁讀唔到就講「讀唔到」，唔會當「冇事故」。
+- 我哋自己個 function 死咗 ≠ Polymarket 死咗，兩件事分開講。
+- 交易 API 應機 **唔等於**你落到單（仲要睇錢包同簽名）—— 唔好講死。
+- 平時縮成一行、靜色；出事先撐開變紅。正常唔應該霸位。
+- Edge / 🔒 panel 攞唔到市場嗰陣，會補一句「（Polymarket數據API而家唔通,唔關你事）」。
+
+⚠️ 呢個 sandbox 個 proxy 封晒 `polymarket.com` / `status.polymarket.com`（403），
+所以真實 response shape 驗證唔到。全部 defensive parse，
+另外用 8 個 mock 情境行過真 code（`onRequest` + 頭條邏輯）確認過分類啱。
+
 ## ⚠️ 市場跟VHHH、結算跟HKO — 兩者之間個楔子
 
 如果 `market_race.js` 證實市場跟住VHHH METAR郁（快6-16分鐘），

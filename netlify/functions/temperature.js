@@ -205,13 +205,23 @@ exports.handler = async function (event) {
   if (metarResult.status === "fulfilled" && metarResult.value) {
     response.metars = metarResult.value; // { VHHH: {tempC,obsTime}, ZSPD: {...}, ZBAA: {...} }
     response.metar = metarResult.value.VHHH || null; // 向後兼容舊前端
+  } else {
+    // ⚠️以前METAR/rhrread死咗係完全靜音:個欄唔見咗,dashboard顯示「--」,
+    // 睇落似「未有數據」多過「壞咗」。而家一律講返點解死。
+    response.metarError = metarResult.status === "rejected" ? metarResult.reason.message : "METAR冇可用報文";
   }
 
   if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
     response.rain = rhrreadResult.value.rain; // { localMm, maxMm, maxDistrict, endTime }
+  } else {
+    response.rainError = rhrreadResult.status === "rejected" ? rhrreadResult.reason.message : "rhrread冇雨量數據";
   }
 
-  const ok = !response.liveError;
+  // ⚠️2026-08-26:以前係 !liveError ? 200 : 502(見functions/api/temperature.js
+  // 個長註解)。四條水喉分開跑,唔應該喺HTTP status呢層夾返埋一齊掉——
+  // HKO個1分鐘CSV打個乞嚏,就連today.max(結算用嗰個數)都會俾client掉走。
+  // 仲有嘢俾得到就200,四條全死先502。
+  const ok = !!(response.live || response.today || response.metars || response.rain);
   return {
     statusCode: ok ? 200 : 502,
     headers: {

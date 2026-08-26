@@ -114,26 +114,50 @@ const CALIB_MONTHS = ["january","february","march","april","may","june","july","
 // 結果係dashboard 16:51見到31°C@99¢,但market班16:19乜都攞唔到。
 // ⚠️改呢個function嘅時候,functions/api/polymarket.js同netlify嗰份要一齊改。
 async function fetchHkMarketPrices(date) {
-  const [, m, d] = date.split("-").map(Number);
-  const slug = `highest-temperature-in-hong-kong-on-${CALIB_MONTHS[m - 1]}-${d}`;
-  const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
-  if (!res.ok) { console.log(`  ⚠️ Gamma API ${res.status}(slug=${slug})`); return {}; }
-  let ev = (await res.json())?.[0];
+  const [y, m, d] = date.split("-").map(Number);
+
+  // ⚠️2026-08-26 由真實API response查實:Polymarket個slug**尾有年份**。
+  // 08-26嗰次market班個log印返:
+  //   slug miss(highest-temperature-in-hong-kong-on-august-26)
+  //   tag入面香港嘅event: lowest-temperature-in-hong-kong-on-august-26-2026
+  //                                                            ^^^^^ 年份
+  // 我哋一路試緊冇年份嗰個,所以由開波到而家一次都冇命中過。
+  // 舊market可能真係冇年份,所以兩個都試,有年份嗰個行先。
+  const slugs = [
+    `highest-temperature-in-hong-kong-on-${CALIB_MONTHS[m - 1]}-${d}-${y}`,
+    `highest-temperature-in-hong-kong-on-${CALIB_MONTHS[m - 1]}-${d}`,
+  ];
+
+  let ev = null, tried = [];
+  for (const slug of slugs) {
+    const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+    if (!res.ok) { console.log(`  ⚠️ Gamma API ${res.status}(slug=${slug})`); return {}; }
+    const hit = (await res.json())?.[0];
+    tried.push(slug);
+    if (hit) { ev = hit; console.log(`  ℹ️ slug命中: ${slug}`); break; }
+  }
 
   if (!ev) {
-    // slug miss → 掃weather tag用title配對(同Pages Function一模一樣嘅fallback)
-    const res2 = await fetch("https://gamma-api.polymarket.com/events?closed=false&limit=200&tag_slug=weather");
-    if (!res2.ok) { console.log(`  ⚠️ slug miss(${slug}),weather tag又 ${res2.status}`); return {}; }
-    const all = await res2.json();
-    const list = Array.isArray(all) ? all : [];
+    // slug都miss → 掃weather tag用title配對
+    // ⚠️同日發現:個API寫limit=200但實際最多回100個,所以一版掃唔晒,
+    // 香港個highest-temperature event就係咁被cut走。要分頁。
+    const list = [];
+    for (let offset = 0; offset < 600; offset += 100) {
+      const res2 = await fetch(`https://gamma-api.polymarket.com/events?closed=false&limit=100&offset=${offset}&tag_slug=weather`);
+      if (!res2.ok) { console.log(`  ⚠️ slug miss,weather tag offset=${offset} 回 ${res2.status}`); break; }
+      const page = await res2.json();
+      if (!Array.isArray(page) || !page.length) break;
+      list.push(...page);
+      if (page.length < 100) break;
+    }
     const titleRe = new RegExp(`highest temperature in hong kong on ${CALIB_MONTHS[m - 1]} ${d}\\b`, "i");
     ev = list.find((e) => titleRe.test(e.title || "")) || null;
     if (!ev) {
       // ⚠️唔好淨係講「攞唔到」——分唔清「市場未開」定「slug/title格式變咗」,
       // 就會好似今次咁,一句模糊嘅log拖足一日先查得出。print返證據。
       const hk = list.filter((e) => /hong kong/i.test(e.title || "")).map((e) => e.slug);
-      console.log(`  ⚠️ slug miss(${slug}),weather tag ${list.length}個event都配唔到title`);
-      console.log(hk.length ? `     tag入面香港嘅event: ${hk.slice(0, 5).join(", ")}` : "     tag入面完全冇香港event(可能真係未開盤)");
+      console.log(`  ⚠️ slug都miss(試過: ${tried.join(", ")}),weather tag掃咗${list.length}個event都配唔到title`);
+      console.log(hk.length ? `     tag入面香港嘅event: ${hk.slice(0, 8).join(", ")}` : "     tag入面完全冇香港event(可能真係未開盤)");
       return {};
     }
     console.log(`  ℹ️ slug miss,靠title fallback搵到: ${ev.slug}`);

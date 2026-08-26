@@ -665,22 +665,41 @@ async function pollLive() {
   try {
     // ⚠️ 唔好加?_=時間戳:會令Netlify CDN cache永遠miss,每次poll都真跑function
     const res = await fetchRetry(TEMP_ENDPOINT, { cache: 'no-store' });
-    if (!res.ok) throw new Error('function ' + res.status);
-    const json = await res.json();
+    const json = await res.json().catch(() => null);
+    // 502 = worker話四條水喉全死,嗰陣個body先真係冇嘢用
+    if (!json) throw new Error('function ' + res.status);
 
-    if (json.liveError) throw new Error(json.liveError);
-    if (json.live.value === null) throw new Error('即時讀數暫時N/A');
+    // ⚠️2026-08-26:呢度以前係 if(json.liveError) throw ——一throw就跳去catch,
+    // 連下面 today.max / METAR / 雨量 都唔會處理。但嗰啲數其實明明攞到咗:
+    // 實測CSV死咗嗰陣,body入面 today.max=31.8、metar=30.2、rain都齊。
+    // 後果係 todayMaxRealized 唔update → 🔒鎖定panel同今日階梯凍住,
+    // 而個1分鐘CSV正正係四條水喉入面最唔穩嗰條。
+    // 依家逐格自己決定畫唔畫,即時讀數死就淨係即時讀數嗰格報錯。
+    const liveOk = !json.liveError && json.live && json.live.value !== null;
+    let value = null;
 
-    const value = json.live.value.toFixed(1);
-    document.getElementById('tempValue').innerHTML = `${value}<span class="unit">°C</span>`;
-    document.getElementById('stationPlace').textContent = '香港天文台總部';
-    // 滯後警告+後備來源提示:讀數舊唔一定係app壞,可能係HKO源頭滯後
-    const liveAgeMin = Math.round((Date.now() - new Date(json.live.recordTime).getTime()) / 60000);
-    const srcNote = json.live.source === 'rhrread' ? ' · rhrread後備(整數)' : '';
-    const staleNote = liveAgeMin > 30 ? ' ⚠️HKO源頭滯後' : '';
-    const rtEl = document.getElementById('recordTime');
-    rtEl.textContent = formatRelativeTime(json.live.recordTime) + srcNote + staleNote;
-    rtEl.style.color = liveAgeMin > 30 ? 'var(--warm)' : '';
+    if (liveOk) {
+      value = json.live.value.toFixed(1);
+      document.getElementById('tempValue').innerHTML = `${value}<span class="unit">°C</span>`;
+      document.getElementById('stationPlace').textContent = '香港天文台總部';
+      // 滯後警告+後備來源提示:讀數舊唔一定係app壞,可能係HKO源頭滯後
+      const liveAgeMin = Math.round((Date.now() - new Date(json.live.recordTime).getTime()) / 60000);
+      const srcNote = json.live.source === 'rhrread' ? ' · rhrread後備(整數)' : '';
+      const staleNote = liveAgeMin > 30 ? ' ⚠️HKO源頭滯後' : '';
+      const rtEl = document.getElementById('recordTime');
+      rtEl.textContent = formatRelativeTime(json.live.recordTime) + srcNote + staleNote;
+      rtEl.style.color = liveAgeMin > 30 ? 'var(--warm)' : '';
+      lastRecordTime = json.live.recordTime;
+      currentRealized = Number(value); // 俾軌跡上限用
+      document.getElementById('liveDot').classList.remove('stale');
+      updateGaugeNeedle(Number(value));
+      clearError();
+    } else {
+      // 即時讀數死咗,但下面啲panel照行——個燈變灰、講明邊格死,唔好扮住有數
+      document.getElementById('liveDot').classList.add('stale');
+      document.getElementById('recordTime').textContent = '即時讀數暫時攞唔到';
+      showError('即時讀數暫時攞唔到：' + (json.liveError || '讀數N/A') + '（其餘panel照更新）');
+    }
 
     if (json.today && !json.todayError) {
       document.getElementById('todayMax').textContent = (json.today.max ?? '--').toString() + '°';
@@ -705,18 +724,17 @@ async function pollLive() {
     }
     if (json.rain) rainNow = json.rain;
 
-    lastRecordTime = json.live.recordTime;
-    document.getElementById('liveDot').classList.remove('stale');
+    // METAR/雨量死咗要講,唔好靜靜哋顯示「--」扮「未有數據」
+    if (json.metarError) document.getElementById('metarTime').textContent = '⚠️ ' + json.metarError;
+
     document.getElementById('lastUpdated').textContent =
       '更新 ' + new Date().toLocaleTimeString('zh-HK', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-    currentRealized = Number(value); // 俾軌跡上限用
     // ⚠️一定要喺currentRealized set咗之後先算:以前喺上面(攞完雨量嗰度)call,
     // 第一次poll撞正currentRealized仲係null,個panel就卡住「等緊即時讀數…」
-    pollHourNowcast();
-    updateGaugeNeedle(Number(value));
-    clearError();
+    if (liveOk) pollHourNowcast();
   } catch (e) {
+    // 行到呢度先係真係乜都冇(四條水喉全死/連唔到/回應唔係JSON)
     document.getElementById('liveDot').classList.add('stale');
     showError('即時讀數暫時攞唔到：' + e.message);
   }

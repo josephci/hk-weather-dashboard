@@ -180,10 +180,25 @@ export async function onRequest(context) {
   if (metarResult.status === "fulfilled" && metarResult.value) {
     response.metars = metarResult.value;
     response.metar = metarResult.value.VHHH || null;
+  } else {
+    // ⚠️以前METAR/rhrread死咗係完全靜音:個欄唔見咗,dashboard就顯示「--」,
+    // 睇落似「未有數據」多過「壞咗」。而家一律講返點解死。
+    response.metarError = metarResult.status === "rejected" ? metarResult.reason.message : "METAR冇可用報文";
   }
   if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
     response.rain = rhrreadResult.value.rain;
+  } else {
+    response.rainError = rhrreadResult.status === "rejected" ? rhrreadResult.reason.message : "rhrread冇雨量數據";
   }
 
-  return json(response, response.liveError ? 502 : 200);
+  // ⚠️2026-08-26:以前係 liveError ? 502 : 200。
+  // 但四條水喉係 Promise.allSettled 分開跑嘅——內部好努力做到「一條死唔拖冧其餘」,
+  // 去到HTTP status呢層又夾返埋一齊掉。client第一句 if(!res.ok) throw,
+  // 結果HKO個1分鐘CSV打個乞嚏,就連 today.max(結算用嗰個數)、METAR、雨量
+  // 一齊掉埋——🔒鎖定panel同今日階梯凍住,而嗰啲數其實明明攞到咗。
+  // 而個1分鐘CSV正正係四條入面最唔穩嗰條。
+  // 依家:仲有嘢俾得到就回200,由client逐格自己決定畫唔畫;
+  //       四條全死先回502(嗰陣真係乜都冇)。
+  const anyUseful = response.live || response.today || response.metars || response.rain;
+  return json(response, anyUseful ? 200 : 502);
 }

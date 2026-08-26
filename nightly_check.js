@@ -184,6 +184,76 @@ function checkFeedbackLoop(problems, notes) {
   } catch { /* bias.json讀唔到,checkBiasProgress嗰邊已經會嘈 */ }
 }
 
+// ⚠️2026-08-26:呢個repo一路只驗data檔,**一次都冇fetch過個live worker**。
+// 結果 /api/pmstatus 回咗成日404(cf-worker.js漏咗register),
+// 係用戶影screenshot先發現。條規矩自己寫住「每次修好一樣嘢順手加一項驗返」,
+// 但worker呢邊完全冇人睇。
+// GitHub Actions行到個workers.dev(market班掂到gamma-api就係證明)。
+//
+// 驗嘅方式跟consumer:唔係淨係睇HTTP 200,係照dashboard嘅規矩讀一次,
+// 睇下讀唔讀到要嗰幾個key。
+const SITE_URL = (process.env.SITE_URL || "https://hk-weather-dashboard.ipchonin.workers.dev").replace(/\/$/, "");
+
+async function getJson(path) {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(SITE_URL + path, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(20000),
+    });
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch { /* 唔係JSON */ }
+    return { status: res.status, ms: Date.now() - t0, body, text };
+  } catch (err) {
+    const timeout = err.name === "TimeoutError" || err.name === "AbortError";
+    return { status: null, ms: Date.now() - t0, err: timeout ? "20秒都冇回應" : (err.message || "連唔到") };
+  }
+}
+
+async function checkWorker(problems, notes) {
+  const [temp, pm, st] = await Promise.all([
+    getJson("/api/temperature"),
+    getJson("/api/polymarket?city=hong-kong"),
+    getJson("/api/pmstatus"),
+  ]);
+
+  // 三個都連唔到 = 成個站down,或者SITE_URL寫錯。唔好報三次同一件事。
+  if ([temp, pm, st].every((r) => r.status === null)) {
+    problems.push(`個dashboard三個endpoint都連唔到(${SITE_URL})——成個站down咗,或者SITE_URL secret未set/寫錯: ${temp.err}`);
+    return;
+  }
+
+  const shapes = [
+    ["/api/temperature", temp, (b) => (b.live || b.today ? null : "冇live又冇today")],
+    ["/api/polymarket", pm, (b) => ("found" in b ? null : "冇found欄")],
+    ["/api/pmstatus", st, (b) => (b.api?.gamma && b.api?.clob ? null : "冇api.gamma/api.clob")],
+  ];
+  for (const [path, r, shapeErr] of shapes) {
+    if (r.status === null) { problems.push(`${path} 連唔到: ${r.err}`); continue; }
+    // 404 = 十有八九漏咗喺cf-worker.js個ROUTES register(今次就係咁)
+    if (r.status === 404) { problems.push(`${path} 回404——多數係cf-worker.js個ROUTES漏咗register`); continue; }
+    if (!r.body) { problems.push(`${path} 回應唔係JSON(HTTP ${r.status}): ${String(r.text).slice(0, 80)}`); continue; }
+    const bad = shapeErr(r.body);
+    if (bad) { problems.push(`${path} 回應形狀唔啱(HTTP ${r.status}): ${bad}`); continue; }
+    notes.push(`${path} ✓ ${r.status} ${r.ms}ms`);
+  }
+
+  // 上游逐條水喉:呢啲會間中壞,唔當problem(唔想出假警報),但一定要見到
+  if (temp.body) {
+    const dead = ["liveError", "todayError", "metarError", "rainError"]
+      .filter((k) => temp.body[k]).map((k) => `${k.replace("Error", "")}(${temp.body[k]})`);
+    if (dead.length) notes.push(`temperature上游有${dead.length}條死咗: ${dead.join(", ")}`);
+    // live同today兩樣一齊死先算問題(單一條死已經喺上面shape check睇住)
+    const rt = temp.body.live?.recordTime;
+    if (rt) {
+      const ageMin = (Date.now() - new Date(rt).getTime()) / 60000;
+      if (ageMin > 90) problems.push(`即時讀數已經${Math.round(ageMin)}分鐘冇更新(HKO源頭滯後?)`);
+      else notes.push(`即時讀數 ${Math.round(ageMin)}分鐘前`);
+    }
+  }
+}
+
 function checkMainPollution(problems) {
   try {
     const n = parseInt(sh(`git log --oneline --since="26 hours ago" --grep="chore: temp log" origin/main | wc -l`), 10);
@@ -218,6 +288,7 @@ async function main() {
   await checkWorkflowRuns(problems, notes);
   checkBiasProgress(problems, cityLines);
   checkFeedbackLoop(problems, notes);
+  await checkWorker(problems, notes);
   checkMainPollution(problems);
   checkDataBranch(problems, notes);
 

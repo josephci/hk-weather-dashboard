@@ -631,8 +631,23 @@ async function settleRemoteCity(key, cfg) {
 // 做法:另開一班喺香港下晝跑,淨係填返今日仲係空白嗰啲格。
 // 已經有價嘅唔會覆蓋——要保住「最早攞到嗰個報價」,愈早嘅報價
 // 資訊優勢愈細,同模型(07:15出)比先公道。
+// 攞市價太夜 = 攞緊個已經知道答案嘅價,唔可以攞嚟同模型比
+// ⚠️2026-08-26實測:22:55 HKT手動跑一次,成功攞到價,但攞返嚟係
+//   29°C=100¢(結果:中)  30°C=0¢  31°C=0¢
+// 香港14-15時就見頂,夜晚個market已經收晒窄。呢啲數放入Brier對比
+// 就係送分俾市場——「市場100%啱」只係因為佢當時已經睇到答案,
+// 唔係佢預測叻。個對比會得出「市場贏晒模型」嘅假結論。
+// 排程本身係13/15/16點,唔會撞到;呢個掣係防手動觸發同cron大延遲。
+const MARKET_CUTOFF_HK_HOUR = 17;
+
 async function runMarketSnapshot() {
   const date = hkToday();
+  const hkHour = new Date(Date.now() + 8 * 3600e3).getUTCHours();
+  if (hkHour >= MARKET_CUTOFF_HK_HOUR || hkHour < 6) {
+    console.log(`⏭️ 而家香港${hkHour}點,過咗${MARKET_CUTOFF_HK_HOUR}點就唔記市價——`);
+    console.log("   高溫早就見頂,個價已經接近結算價,記落去會令「模型vs市場」對比失真。");
+    return;
+  }
   const rows = loadCalib();
   const todays = rows.filter((r) => r.date === date);
   if (!todays.length) { console.log(`ℹ️ ${date} 未有校準快照,冇嘢好補(forecast班未跑?)`); return; }

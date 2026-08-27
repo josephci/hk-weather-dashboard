@@ -1301,6 +1301,37 @@ function hkTime(iso) {
   return `${hk.getUTCMonth() + 1}月${hk.getUTCDate()}日 ${p(hk.getUTCHours())}:${p(hk.getUTCMinutes())}`;
 }
 
+// 「幾時」對落注冇用,「仲有幾耐」先有用。
+// ⚠️2026-08-27:用戶講「今日有維護但佢話expect no down time,
+// 但係到時候係無人知會咩情況」——所以要俾佢見到個倒數,同埋
+// 撞唔撞正香港高溫時段(12-20時,即係實測max出爐、🔒鎖定機會出現、
+// 最需要落到單嗰幾個鐘)。維護撞正嗰陣你可能就係落唔到單。
+function pmCountdown(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (Number.isNaN(ms)) return null;
+  if (ms < 0) return '已經開始';
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${min}分鐘後`;
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24) return m ? `${h}小時${m}分鐘後` : `${h}小時後`;
+  return `${Math.round(h / 24)}日後`;
+}
+
+// 個維護窗口有冇食到香港12:00-20:00(高溫見頂→結算嗰段)
+function pmHitsHkPeak(fromIso, untilIso) {
+  if (!fromIso) return false;
+  const a = new Date(fromIso).getTime();
+  const b = untilIso ? new Date(untilIso).getTime() : a + 3600e3;
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  // 逐15分鐘行一次,夠簡單又唔會漏咗跨日嘅窗口
+  for (let t = a; t <= b; t += 15 * 60e3) {
+    const hkH = new Date(t + 8 * 3600e3).getUTCHours();
+    if (hkH >= 12 && hkH < 20) return true;
+  }
+  return false;
+}
+
 function pmWhen(from, until) {
   const a = hkTime(from), b = hkTime(until);
   if (!a) return b ? `香港時間 ${b} 完` : '';
@@ -1339,7 +1370,19 @@ async function pollPmStatus() {
     else if (gamma && !gamma.ok) { level = 'bad'; title = '⚠️ 市場數據API唔通(下面啲價會空白)'; }
     else if (inc.length) { level = 'warn'; title = '⚠️ Polymarket 有事故'; }
     else if (s.page?.indicator && s.page.indicator !== 'none') { level = 'warn'; title = `⚠️ ${s.page.description || 'Polymarket 狀態異常'}`; }
-    else if (mnt.length) { level = 'ok'; title = 'Polymarket 正常(有排期維護)'; }
+    else if (mnt.length) {
+      // 排期維護唔應該一律當「正常」:6個鐘內就到嘅,你落注前要知
+      const soon = [...mnt].filter(m => m.scheduledFor)
+        .sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor))[0];
+      const mins = soon ? (new Date(soon.scheduledFor).getTime() - Date.now()) / 60000 : Infinity;
+      if (mins <= 360) {
+        level = 'warn';
+        title = `🔧 ${pmCountdown(soon.scheduledFor)}有維護` +
+          (pmHitsHkPeak(soon.scheduledFor, soon.scheduledUntil) ? '(撞正香港高溫時段)' : '');
+      } else {
+        title = `Polymarket 正常 · ${pmCountdown(soon?.scheduledFor) || ''}有維護`;
+      }
+    }
     else if (!s.page && s.pageError) { level = 'ok'; title = 'Polymarket API通(官方狀態頁讀唔到)'; }
 
     sec.className = 'pm-status' + (level === 'ok' ? '' : ' ' + level);
@@ -1351,8 +1394,20 @@ async function pollPmStatus() {
     // 細節:有事先寫。正常嘅日子淨係一行,唔好霸位
     const rows = [];
     for (const m of nowMnt.concat(mnt.filter(x => x.status !== 'in_progress'))) {
-      rows.push(`<div class="pm-item">🔧 <b>${esc(m.name)}</b>${m.status === 'in_progress' ? '（進行緊）' : '（未開始）'}
-        <span class="pm-when">${esc(pmWhen(m.scheduledFor, m.scheduledUntil))}</span></div>`);
+      const cd = m.status === 'in_progress' ? '進行緊' : pmCountdown(m.scheduledFor);
+      const peak = pmHitsHkPeak(m.scheduledFor, m.scheduledUntil);
+      rows.push(`<div class="pm-item">🔧 <b>${esc(m.name)}</b>${cd ? `（${esc(cd)}）` : ''}
+        <span class="pm-when">${esc(pmWhen(m.scheduledFor, m.scheduledUntil))}` +
+        (peak ? ' · ⚠️撞正香港高溫時段(12-20時)' : '') + `</span>` +
+        (m.body ? `<span class="pm-when">官方：${esc(m.body)}</span>` : '') + `</div>`);
+    }
+    // ⚠️用戶原話:「佢話expect no down time,但係到時候係無人知會咩情況」。
+    // 官方寫住唔預期停機≠一定冇事,而呢個系統嘅🔒鎖定機會全部係
+    // 「落到單先算數」——維護窗口撞正嗰陣落唔到單,個edge就等於冇。
+    // 所以有維護就一定要出呢句,唔好靠人自己記得。
+    if (mnt.length) {
+      rows.push('<div class="pm-note">⚠️ 官方就算寫「唔預期停機」都好,到時實際點冇人擔保。' +
+        '窗口前後落注審慎啲——🔒鎖定係要落到單先算數,落唔到單個edge等於冇。</div>');
     }
     for (const i of inc) {
       rows.push(`<div class="pm-item">⚠️ <b>${esc(i.name)}</b>（${esc(i.impact || '')}${esc(i.status || '')}）
@@ -1361,11 +1416,25 @@ async function pollPmStatus() {
     for (const c of (s.page?.degraded || [])) {
       rows.push(`<div class="pm-item">🔻 ${esc(c.name)}：${esc(c.status)}</div>`);
     }
+
+    // ⚠️2026-08-27:過去48小時已解決嘅事故都要見到。
+    // 你問「尋日佢個API down搞到咩都做唔到」——如果只顯示進行緊嗰啲,
+    // 事後個panel就寫住「正常」,你完全睇唔出尋日發生過乜,
+    // 亦都唔知自己尋日做唔到嘢究竟係人哋定係自己。灰色細字,唔好扮緊急。
+    for (const i of (s.page?.recentIncidents || [])) {
+      const when = hkTime(i.startedAt), until = hkTime(i.resolvedAt);
+      rows.push(`<div class="pm-item" style="opacity:.75;">✅ 已解決：${esc(i.name)}` +
+        `<span class="pm-when">${esc(when ? `${when}${until ? ` → ${until}` : ''}` : '')}${i.impact ? ` · ${esc(i.impact)}` : ''}</span></div>`);
+    }
     if (gamma && !gamma.ok) rows.push(`<div class="pm-item">市場數據(gamma)：${esc(gamma.detail || '連唔到')}</div>`);
     if (clob && !clob.ok) rows.push(`<div class="pm-item">交易(clob)：${esc(clob.detail || '連唔到')}</div>`);
     if (s.pageError && (level !== 'ok')) rows.push(`<div class="pm-note">官方狀態頁：${esc(s.pageError)}</div>`);
     // ⚠️唔好講「你落到單」——呢度只證明API應機,落單仲要簽名同錢包
     if (clob?.ok && level !== 'ok') rows.push('<div class="pm-note">交易API應機唔等於你落到單(仲要睇錢包/簽名)。</div>');
+    // ⚠️statuspage個v2 API回英文,所以上面啲事故名係英文。
+    // 官方有中文版頁,詳情擺喺嗰度睇。
+    rows.push('<div class="pm-note"><a href="https://status.polymarket.com/zh" target="_blank" rel="noopener" ' +
+      'style="color:var(--brass);text-decoration:none;">官方狀態頁（中文）↗</a></div>');
     det.innerHTML = rows.join('');
   } catch (e) {
     // 我哋自己個function死咗,同Polymarket死咗係兩件事,唔可以扮綠燈

@@ -1361,11 +1361,25 @@ async function pollPmStatus() {
     for (const c of (s.page?.degraded || [])) {
       rows.push(`<div class="pm-item">🔻 ${esc(c.name)}：${esc(c.status)}</div>`);
     }
+
+    // ⚠️2026-08-27:過去48小時已解決嘅事故都要見到。
+    // 你問「尋日佢個API down搞到咩都做唔到」——如果只顯示進行緊嗰啲,
+    // 事後個panel就寫住「正常」,你完全睇唔出尋日發生過乜,
+    // 亦都唔知自己尋日做唔到嘢究竟係人哋定係自己。灰色細字,唔好扮緊急。
+    for (const i of (s.page?.recentIncidents || [])) {
+      const when = hkTime(i.startedAt), until = hkTime(i.resolvedAt);
+      rows.push(`<div class="pm-item" style="opacity:.75;">✅ 已解決：${esc(i.name)}` +
+        `<span class="pm-when">${esc(when ? `${when}${until ? ` → ${until}` : ''}` : '')}${i.impact ? ` · ${esc(i.impact)}` : ''}</span></div>`);
+    }
     if (gamma && !gamma.ok) rows.push(`<div class="pm-item">市場數據(gamma)：${esc(gamma.detail || '連唔到')}</div>`);
     if (clob && !clob.ok) rows.push(`<div class="pm-item">交易(clob)：${esc(clob.detail || '連唔到')}</div>`);
     if (s.pageError && (level !== 'ok')) rows.push(`<div class="pm-note">官方狀態頁：${esc(s.pageError)}</div>`);
     // ⚠️唔好講「你落到單」——呢度只證明API應機,落單仲要簽名同錢包
     if (clob?.ok && level !== 'ok') rows.push('<div class="pm-note">交易API應機唔等於你落到單(仲要睇錢包/簽名)。</div>');
+    // ⚠️statuspage個v2 API回英文,所以上面啲事故名係英文。
+    // 官方有中文版頁,詳情擺喺嗰度睇。
+    rows.push('<div class="pm-note"><a href="https://status.polymarket.com/zh" target="_blank" rel="noopener" ' +
+      'style="color:var(--brass);text-decoration:none;">官方狀態頁（中文）↗</a></div>');
     det.innerHTML = rows.join('');
   } catch (e) {
     // 我哋自己個function死咗,同Polymarket死咗係兩件事,唔可以扮綠燈

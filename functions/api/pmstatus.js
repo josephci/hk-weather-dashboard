@@ -107,7 +107,29 @@ function parseStatusPage(body) {
     .filter((c) => c.status && c.status !== "operational" && !c.group)
     .map((c) => ({ name: c.name, status: c.status }));
 
-  return { indicator, description, incidents, maintenances, degraded };
+  // ⚠️2026-08-27:本來只回進行緊嘅事故。但用戶嘅問題係
+  // 「昨日就係佢個API有down time搞到咩都做唔到」——即係佢想知返
+  // 啱啱先發生完嗰啲。已解決嘅一律filter走,個panel就會顯示「正常」,
+  // 佢完全睇唔出尋日有嘢發生過,亦都唔知自己尋日做唔到嘢係咪自己問題。
+  // 攞返過去48小時已解決嘅,用灰色細字放喺下面(唔好扮緊急)。
+  const since = Date.now() - 48 * 3600e3;
+  const recentIncidents = (j.incidents || [])
+    .filter((i) => (i.status === "resolved" || i.status === "postmortem") &&
+      i.resolved_at && Date.parse(i.resolved_at) >= since)
+    .map((i) => ({
+      name: i.name,
+      impact: i.impact,
+      startedAt: i.started_at ?? i.created_at ?? null,
+      resolvedAt: i.resolved_at,
+    }));
+
+  // 交易嗰條component而家點——就算成體正常都要見到,因為你最想知就係佢
+  const TRADING_RE = /trading|clob|order|exchange/i;
+  const trading = (j.components || [])
+    .filter((c) => !c.group && TRADING_RE.test(c.name || ""))
+    .map((c) => ({ name: c.name, status: c.status }));
+
+  return { indicator, description, incidents, maintenances, degraded, recentIncidents, trading };
 }
 
 function json(body, status = 200) {

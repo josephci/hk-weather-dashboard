@@ -502,13 +502,31 @@ async function backfillHkRealized(rows) {
 
   const years = [...new Set(missing.map((r) => r.date.slice(0, 4)))];
   const official = {};
+  // ⚠️2026-09-02:第一版行完印「仲有8日補唔到(CLMMAXT未出數?)」——
+  // 一個問號,即係我自己都係喺度估。API回咗200但match唔到日子,
+  // 可能係:年份唔啱 / 個schema變咗 / 官方真係未出到嗰幾日。
+  // 呢三個死因要分得開,唔係又要多跑一日先知。print返證據。
   for (const year of years) {
-    const res = await fetch(`https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO&year=${year}`);
-    if (!res.ok) { console.log(`  ⚠️ CLMMAXT ${year}: ${res.status}`); continue; }
-    for (const row of (await res.json()).data ?? []) {
+    const url = `https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO&year=${year}`;
+    const res = await fetch(url);
+    if (!res.ok) { console.log(`  ⚠️ CLMMAXT ${year}: HTTP ${res.status}`); continue; }
+    let j;
+    try { j = await res.json(); }
+    catch { console.log(`  ⚠️ CLMMAXT ${year}: 回應唔係JSON`); continue; }
+
+    const data = j.data ?? [];
+    let added = 0;
+    for (const row of data) {
       const [y, m, d, v] = row;
       const n = parseFloat(v);
-      if (y && m && d && !Number.isNaN(n)) official[`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`] = n;
+      if (y && m && d && !Number.isNaN(n)) { official[`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`] = n; added++; }
+    }
+    const dates = Object.keys(official).filter((k) => k.startsWith(year)).sort();
+    console.log(`  ℹ️ CLMMAXT ${year}: ${data.length}行,parse到${added}個日子` +
+      (dates.length ? `,最新到 ${dates[dates.length - 1]}` : ""));
+    if (!added && data.length) {
+      console.log(`     ⚠️ 有行但parse唔到——schema可能變咗。fields=${JSON.stringify(j.fields)}`);
+      console.log(`     頭一行樣本: ${JSON.stringify(data[0])}`);
     }
   }
 
@@ -524,9 +542,12 @@ async function backfillHkRealized(rows) {
 
   const stillMissing = missing.length - filled;
   if (stillMissing) {
-    // CLMMAXT通常遲一兩日先出。講清楚係「等緊官方出數」定係「真係冇咗」
+    // 上面已經print咗CLMMAXT實際覆蓋到邊日,呢度淨係列返欠邊幾日,
+    // 唔好再自己估死因(第一版寫「CLMMAXT未出數?」個問號就係估)
     const dates = missing.filter((r) => !hasVal(r.realized)).map((r) => r.date);
-    console.log(`  ℹ️ 仲有${stillMissing}日補唔到(CLMMAXT未出數?): ${dates.join(", ")}`);
+    const latest = Object.keys(official).sort().pop();
+    console.log(`  ℹ️ 仲有${stillMissing}日補唔到: ${dates.join(", ")}`);
+    console.log(`     CLMMAXT官方最新只到 ${latest ?? "(乜都冇)"}——上面幾行有埋佢覆蓋範圍`);
   }
   return filled;
 }

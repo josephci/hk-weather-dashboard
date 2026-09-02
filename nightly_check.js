@@ -95,7 +95,10 @@ function checkBiasProgress(problems, cityLines) {
     problems.push("香港近兩日有realized但冇模型預測——朝早forecast班可能錯咗mode/死咗");
   }
   if (recentRealizedOk("forecast_log.csv") === false) {
-    problems.push("香港近兩日有模型預測但冇realized——晚上settle班冇跑到(cron延遲衝過香港午夜?)");
+    // ⚠️2026-09-02:settle skip咗而家有後路(backfillHkRealized攞CLMMAXT官方數補返),
+    // 所以行到呢度即係「當日settle skip咗**而且**backfill都補唔到」——
+    // 唔好再叫人淨係去查cron,要分埋CLMMAXT嗰邊。
+    problems.push("香港近兩日有模型預測但冇realized——settle skip咗(cron延遲衝過香港午夜)而且CLMMAXT backfill都補唔返,開Actions睇settle班個log");
   }
 
   for (const c of CITIES) {

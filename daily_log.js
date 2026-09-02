@@ -469,7 +469,66 @@ async function runSettle() {
     console.log(`⚠️ 延遲跨咗香港午夜(HK ${hkHour}點),maxmin CSV得新一日凌晨數據,skip香港settle`);
   }
 
+  // ⚠️唔理skip咗與否都要行:個guard係啱嘅,但冇後路就等於靜靜哋丟數。
+  // 2026-08-29至09-01連續4日就係咁冇咗(delay 4小時20分衝穿個buffer)。
+  try {
+    await backfillHkRealized(rows);
+  } catch (e) {
+    console.log("⚠️ 補返舊日子失敗(唔影響其他):", e.message);
+  }
+
   await settleAndWriteBias(rows);
+}
+
+// 補返過去冇settle到嘅日子。
+//
+// ⚠️2026-09-02發現:08-29起連續5日香港冇realized,而遠程城市全部正常。
+// 原因唔係個保險掣錯——係佢啱,但冇後路:
+//   settle排 15 12 UTC(HK 20:15),09-01實際16:35 UTC先行 = HK翌日00:35,
+//   延遲4小時20分。個guard見hkHour<12就skip(唔想攞新一日凌晨個假max),
+//   然後嗰日就**永久**少咗,冇任何嘢會補返。
+// 當初個buffer係照「延遲126-145分鐘」設計(README寫住3小時45分buffer),
+// 而家實測4小時20分,直接衝穿。
+//
+// 與其同cron鬥快,不如攞返個**權威源**:CLMMAXT係HKO官方每日最高溫,
+// 亦即係Polymarket香港市場嘅結算源本身,有歷史、唔怕遲。
+// 每次settle都行一次,見到「有模型預測但冇realized」嘅舊日子就填返。
+// 只填空格,唔覆蓋已有嘅數——當日settle攞到嘅始終最貼。
+async function backfillHkRealized(rows) {
+  const today = hkToday();
+  const missing = rows.filter((r) =>
+    r.date < today && !hasVal(r.realized) && MODELS.some((m) => hasVal(r.forecasts[m])));
+  if (!missing.length) return 0;
+
+  const years = [...new Set(missing.map((r) => r.date.slice(0, 4)))];
+  const official = {};
+  for (const year of years) {
+    const res = await fetch(`https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=CLMMAXT&rformat=json&station=HKO&year=${year}`);
+    if (!res.ok) { console.log(`  ⚠️ CLMMAXT ${year}: ${res.status}`); continue; }
+    for (const row of (await res.json()).data ?? []) {
+      const [y, m, d, v] = row;
+      const n = parseFloat(v);
+      if (y && m && d && !Number.isNaN(n)) official[`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`] = n;
+    }
+  }
+
+  let filled = 0;
+  for (const r of missing) {
+    if (official[r.date] === undefined) continue;
+    r.realized = official[r.date].toFixed(1);
+    filled++;
+    console.log(`  ↩️ 補返 ${r.date}: ${r.realized}°C (CLMMAXT官方)`);
+    try { settleCalib(r.date, official[r.date]); } catch { /* 冇快照就算 */ }
+  }
+  if (filled) saveLog(rows);
+
+  const stillMissing = missing.length - filled;
+  if (stillMissing) {
+    // CLMMAXT通常遲一兩日先出。講清楚係「等緊官方出數」定係「真係冇咗」
+    const dates = missing.filter((r) => !hasVal(r.realized)).map((r) => r.date);
+    console.log(`  ℹ️ 仲有${stillMissing}日補唔到(CLMMAXT未出數?): ${dates.join(", ")}`);
+  }
+  return filled;
 }
 
 async function settleHk(rows) {

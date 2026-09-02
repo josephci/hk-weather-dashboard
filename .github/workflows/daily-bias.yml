@@ -7,6 +7,15 @@ on:
     # 排22:15 HKT都會俾佢推過香港午夜,daily_log個保險掣就會skip咗香港settle
     # (連續3日冇實測入賬)。排20:15 HKT留3小時45分buffer,而香港日高溫
     # 14-15時就見頂,20:15結算穩陣。
+    # ⚠️2026-09-02:settle改成一日試三次。單靠一班係頂唔住cron延遲嘅——
+    # 09-01實測延遲4小時20分,12:15排程16:35先行=香港翌日00:35,
+    # guard擋住(啱嘅),但嗰日就永久少咗。8月已經噉樣蝕咗8日。
+    # 補救唔到:CLMMAXT官方落後成個月(09-02查最新只到07-31)。
+    # 所以唯一得嘅方法係唔好一開始就漏——香港高溫14-15時見頂,
+    # 17:00之後攞到嘅已經係當日真max;maxmin CSV個「由午夜到而家」
+    # 喺同一日只升唔跌,所以三班攞最大嗰個,邊班衝穿都仲有後備。
+    - cron: "0 9 * * *"  # UTC 09:00 = 香港17:00
+    - cron: "0 10 * * *" # UTC 10:00 = 香港18:00
     - cron: "15 12 * * *" # UTC 12:15 = 香港20:15，記錄今日實測+重計bias
     # 市價快照:香港market通常當日下晝先開盤,07:15嗰班一定攞唔到價
     # (2026-08-22查:市價欄開咗10日,92行一格都冇記到)。排兩班係因為
@@ -50,7 +59,9 @@ jobs:
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event.schedule }}" = "15 23 * * *" ]; then
             echo "mode=forecast" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.schedule }}" = "15 12 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "15 12 * * *" ] \
+            || [ "${{ github.event.schedule }}" = "0 10 * * *" ] \
+            || [ "${{ github.event.schedule }}" = "0 9 * * *" ]; then
             echo "mode=settle" >> $GITHUB_OUTPUT
           else
             echo "mode=market" >> $GITHUB_OUTPUT

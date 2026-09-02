@@ -567,9 +567,23 @@ async function settleHk(rows) {
 
   let row = rows.find((r) => r.date === today);
   if (!row) { row = { date: today, forecasts: {}, realized: "" }; rows.push(row); }
+
+  // ⚠️2026-09-02:改成「只升唔跌」,配合一日跑幾次settle。
+  // maxmin CSV個max係「由午夜到而家」,喺同一個香港日之內只會升唔會跌,
+  // 所以跑幾次揀最大嗰個係啱嘅,亦都係唯一唔怕cron延遲嘅做法:
+  //   HK 17:00嗰班攞到31.2 → 18:00攞到31.8 → 20:15嗰班就算延遲到
+  //   跨咗午夜俾guard擋住,31.8已經入咗數,唔會再丟成日。
+  // (CLMMAXT補唔到近期日子——官方落後成個月,09-02嗰日最新只到07-31)
+  const prev = hasVal(row.realized) ? parseFloat(row.realized) : null;
+  if (prev !== null && realized <= prev) {
+    console.log(`✓ ${today} 已有實測 ${prev.toFixed(1)}°C,今次攞到 ${realized.toFixed(1)}°C,唔會調低`);
+    return;
+  }
   row.realized = realized.toFixed(1);
   saveLog(rows);
-  console.log(`✅ 已記錄 ${today} 實測最高溫: ${realized.toFixed(1)}°C`);
+  console.log(prev === null
+    ? `✅ 已記錄 ${today} 實測最高溫: ${realized.toFixed(1)}°C`
+    : `✅ ${today} 實測最高溫由 ${prev.toFixed(1)}°C 升到 ${realized.toFixed(1)}°C`);
 
   try {
     settleCalib(today, realized);

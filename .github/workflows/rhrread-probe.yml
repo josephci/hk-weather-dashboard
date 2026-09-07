@@ -1,0 +1,34 @@
+name: 快水喉探測 (rhrread cadence)
+
+# 一次過跑一段時間,量rhrread真正幾耐更新一次、幾點出、幾時會冇咗。
+# ⚠️唔會改任何檔案、唔會send通知——純觀察,睇個log就得。
+#
+# 點解要喺Actions跑唔喺sandbox跑:呢個開發sandbox個proxy封住
+# data.weather.gov.hk(403)。Actions行得到。
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "跑幾多分鐘(預設65,至少要蓋住一個整點)"
+        required: false
+        default: "65"
+      interval:
+        description: "幾多秒poll一次(預設15)"
+        required: false
+        default: "15"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 探測
+        run: node rhrread_probe.js --minutes=${{ github.event.inputs.minutes || 65 }} --interval=${{ github.event.inputs.interval || 15 }}

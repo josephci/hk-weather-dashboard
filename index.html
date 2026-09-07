@@ -397,6 +397,10 @@
       <span>✈️ 赤鱲角METAR：<span id="metarTemp" style="font-family:var(--mono);">--°</span></span>
       <span id="metarTime" style="font-size:12px;"></span>
     </div>
+    <div class="station-line" style="margin-top:6px;">
+      <span>⚡ 快水喉(整數)：<span id="fastTemp" style="font-family:var(--mono);color:var(--brass);font-weight:700;">--°</span></span>
+      <span id="fastTime" style="font-size:12px;"></span>
+    </div>
   </section>
 
   <section class="gauge-panel">
@@ -723,6 +727,23 @@ async function pollLive() {
       if (currentCity !== 'hk') renderCnLive();
     }
     if (json.rain) rainNow = json.rain;
+
+    // ⚡ 快水喉:整數溫度 + 佢係邊個時間嘅數。
+    // ⚠️2026-09-07:呢條線以前冇——rhrread攞咗返嚟但淨係俾pickLive()做後備,
+    // 個payload根本冇出過。而家獨立顯示,因為佢比1分鐘CSV早出,
+    // 而個整數就係Polymarket個bucket嘅單位。
+    // 「幾點嗰個數」一定要同個值一齊睇:個整數幾多度,冇講係幾點,係冇用嘅。
+    const fastEl = document.getElementById('fastTemp');
+    const fastTimeEl = document.getElementById('fastTime');
+    if (json.fast && typeof json.fast.value === 'number') {
+      fastEl.textContent = json.fast.value + '°';
+      const rt = json.fast.recordTime;
+      const clock = hkClock(rt) || '?';
+      fastTimeEl.textContent = `${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}`;
+    } else {
+      fastEl.textContent = '--°';
+      fastTimeEl.textContent = json.rainError ? '⚠️ 攞唔到' : '';
+    }
 
     // METAR/雨量死咗要講,唔好靜靜哋顯示「--」扮「未有數據」
     if (json.metarError) document.getElementById('metarTime').textContent = '⚠️ ' + json.metarError;
@@ -1292,6 +1313,20 @@ async function pollTrend() {
 let pmHealth = null;   // 俾edge panel借嚟解釋點解攞唔到市場
 
 // 幾時維護:statuspage回UTC ISO,轉做香港時間先講得出「幾點」
+// ⚠️2026-09-07:唔可以用toLocaleTimeString——佢跟部機時區。
+// 喺UTC環境test,香港11:00嘅recordTime會顯示成「03:00嘅數」。
+// 你部iPhone喺香港係啱嘅,但漫遊/時區設錯就會靜靜哋顯示錯個鐘數,
+// 而「呢個整數係幾點嗰個數」正正就係呢條線嘅重點。
+// 呢個repo已經為咗同一類問題改過個時鐘(iOS zh-HK)。一律自己算UTC+8。
+function hkClock(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const hk = new Date(d.getTime() + 8 * 3600e3);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(hk.getUTCHours())}:${p(hk.getUTCMinutes())}`;
+}
+
 function hkTime(iso) {
   if (!iso) return null;
   const d = new Date(iso);

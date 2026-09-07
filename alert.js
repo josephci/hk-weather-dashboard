@@ -117,6 +117,37 @@ function appendHistory(recordTime, value, todayMax, todayMin) {
   fs.appendFileSync(HISTORY_FILE, `${recordTime},${value ?? ""},${todayMax ?? ""},${todayMin ?? ""}\n`);
 }
 
+// 快水喉(rhrread)嘅發佈規律log。
+//
+// ⚠️2026-09-07:呢個repo一路冇記錄過rhrread幾時更新——history.csv記嘅係
+// 慢水喉(1分鐘CSV)嘅recordTime,alert_state.json淨係存alert狀態。
+// 所以「快水喉幾耐更新一次、幾時會冇send」呢條問題係答唔到嘅。
+//
+// 25分鐘探測初步見到:recordTime係正整點、隔60分鐘、滯後3.4分鐘。
+// 但得1個interval,而且「有時無send」觀察到0次——樣本完全唔夠。
+// alert.js每5分鐘已經行緊、亦已經fetch緊rhrread,順手記低就有幾日數據。
+//
+// ⚠️故意開獨立檔,唔郁history.csv:嗰個schema一改就要搵晒所有reader
+// (index.html pollTrend讀緊),calibration_log加一欄就係冇做呢步,
+// 靜咗個feedback loop十日。
+//
+// seenAt = 我哋幾時見到(即係你實際幾快知);recordTime = 個數係幾點嘅。
+// 兩者之差就係滯後,亦即係你個交易窗口有幾闊。
+const RHRREAD_LOG = path.join(__dirname, "rhrread_log.csv");
+
+function appendRhrreadLog(fast) {
+  if (!fast || !fast.recordTime) return;
+  if (!fs.existsSync(RHRREAD_LOG)) {
+    fs.writeFileSync(RHRREAD_LOG, "seenAt,recordTime,value\n");
+  }
+  // 同一個recordTime唔好重複記(每5分鐘跑一次,一個鐘會撞到十幾次)
+  const lines = fs.readFileSync(RHRREAD_LOG, "utf-8").trim().split(/\r?\n/);
+  const lastRt = lines.length > 1 ? lines[lines.length - 1].split(",")[1] : null;
+  if (lastRt === fast.recordTime) return;
+  fs.appendFileSync(RHRREAD_LOG, `${new Date().toISOString()},${fast.recordTime},${fast.value ?? ""}\n`);
+  console.log(`⚡ 快水喉更新: ${fast.recordTime} = ${fast.value}°C`);
+}
+
 // ---------- Polymarket 市場數據 ----------
 // 用Gamma API（公開、唔使key）搵當日香港最高溫市場，攞返各bucket現價
 async function fetchPolymarketHKTemp(dateStr) {
@@ -423,6 +454,7 @@ async function main() {
 
   // 記錄歷史（每次run都記，方便日後覆盤）
   appendHistory(recordTime, current, todayMax, todayMin);
+  appendRhrreadLog(fast); // 快水喉發佈規律(只喺recordTime變咗先記一行)
 
   if (events.length > 0) {
     const fastLine = fast && !Number.isNaN(fast.value) ? ` ｜ 快 ${fast.value}°(${fast.recordTime?.slice(11, 16) ?? "?"})` : "";

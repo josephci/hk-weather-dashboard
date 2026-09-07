@@ -35,7 +35,7 @@ jobs:
           else
             git worktree add -b data data-branch HEAD
           fi
-          cp data-branch/alert_state.json data-branch/history.csv . 2>/dev/null || true
+          cp data-branch/alert_state.json data-branch/history.csv data-branch/rhrread_log.csv . 2>/dev/null || true
 
       - name: 執行溫度警報偵測
         env:
@@ -45,8 +45,8 @@ jobs:
 
       - name: 儲存 state + 歷史紀錄（push上data branch）
         run: |
-          cp alert_state.json history.csv data-branch/ 2>/dev/null || true
+          cp alert_state.json history.csv rhrread_log.csv data-branch/ 2>/dev/null || true
           cd data-branch
-          git add alert_state.json history.csv
+          git add alert_state.json history.csv rhrread_log.csv
           git diff --staged --quiet || git commit -m "chore: temp log $(date -u +%H:%M) [skip ci]"
           git push -u origin data

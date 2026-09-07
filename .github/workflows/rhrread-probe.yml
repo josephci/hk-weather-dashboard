@@ -30,5 +30,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: 探測
+      - name: 掃一次天文台有咩源(快,唔使等)
+        run: node hko_probe.js
+
+      - name: 探測快水喉更新規律
         run: node rhrread_probe.js --minutes=${{ github.event.inputs.minutes || 65 }} --interval=${{ github.event.inputs.interval || 15 }}

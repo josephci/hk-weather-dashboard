@@ -89,12 +89,40 @@ const CHANNELS = {
 // ---------- 市場 ----------
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 
+// ⚠️2026-09-07:呢度本來用冇年份嘅slug,即係由頭到尾都命中唔到。
+// 2026-08-26喺market班個log查實:Polymarket真正嘅slug尾有年份
+//   highest-temperature-in-hong-kong-on-august-26-2026
+// 當時修咗daily_log.js同兩個polymarket.js,但漏咗呢份——
+// 而呢個script一直未跑過,所以冇人發現。如果照跑落去,
+// 會收足4個鐘、一格市場數據都冇,而且冇錯誤訊息。
+// (CLAUDE.md:改一個writer = 搵晒所有reader。呢次就係漏咗一個。)
 async function fetchMarket() {
   const d = hkNow();
-  const slug = `highest-temperature-in-hong-kong-on-${MONTHS[d.getUTCMonth()]}-${d.getUTCDate()}`;
-  const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Gamma ${res.status}`);
-  const ev = (await res.json())?.[0];
+  const slugs = [
+    `highest-temperature-in-hong-kong-on-${MONTHS[d.getUTCMonth()]}-${d.getUTCDate()}-${d.getUTCFullYear()}`,
+    `highest-temperature-in-hong-kong-on-${MONTHS[d.getUTCMonth()]}-${d.getUTCDate()}`,
+  ];
+  let ev = null;
+  for (const slug of slugs) {
+    const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Gamma ${res.status}`);
+    const hit = (await res.json())?.[0];
+    if (hit) { ev = hit; break; }
+  }
+  // slug都miss → 掃weather tag配title(個API寫limit=200但實際最多回100,要分頁)
+  if (!ev) {
+    const all = [];
+    for (let offset = 0; offset < 600; offset += 100) {
+      const r = await fetch(`https://gamma-api.polymarket.com/events?closed=false&limit=100&offset=${offset}&tag_slug=weather`, { cache: "no-store" });
+      if (!r.ok) break;
+      const page = await r.json();
+      if (!Array.isArray(page) || !page.length) break;
+      all.push(...page);
+      if (page.length < 100) break;
+    }
+    const re = new RegExp(`highest temperature in hong kong on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}\\b`, "i");
+    ev = all.find((e) => re.test(e.title || "")) || null;
+  }
   if (!ev) return null;
   const out = {};
   for (const mkt of ev.markets || []) {

@@ -71,6 +71,32 @@ function csvTime(ts) {
   return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}T${s.slice(8,10)}:${s.slice(10,12)}:00+08:00`;
 }
 
+// DYN_DAT_MINDS_*個時間戳格式未知。試齊幾種常見寫法,一種都唔中就回null,
+// 由caller負責print原文——好過靜靜哋當「冇時間戳」。
+function mindsTime(timeRaw, dateRaw) {
+  if (timeRaw === null || timeRaw === undefined) return null;
+  const t = String(timeRaw).trim();
+  const d = dateRaw === null || dateRaw === undefined ? "" : String(dateRaw).trim();
+
+  // ① YYYYMMDDHHMM 一舊過
+  const full = csvTime(t);
+  if (full) return full;
+  // ② BulletinDate=YYYYMMDD + BulletinTime=HHMM (最大機會)
+  if (/^\d{8}$/.test(d) && /^\d{3,4}$/.test(t)) {
+    const hhmm = t.padStart(4, "0");
+    return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${hhmm.slice(0,2)}:${hhmm.slice(2,4)}:00+08:00`;
+  }
+  // ③ 已經係ISO或者Date食得落
+  if (Date.parse(t)) return new Date(t).toISOString();
+  // ④ 淨係HH:MM → 當係今日(香港)
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) {
+    const hk = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+    return `${hk}T${m[1].padStart(2,"0")}:${m[2]}:00+08:00`;
+  }
+  return null;
+}
+
 async function probe([name, url, kind]) {
   const t0 = now();
   let res;
@@ -113,10 +139,15 @@ async function probe([name, url, kind]) {
       const root = j[Object.keys(j)[0]] || {};
       const keys = Object.keys(root);
       out.note = `${keys.length}個欄位`;
-      const stampRaw = root.BulletinTime?.Val_Eng ?? root.BulletinTime ?? null;
-      // BulletinTime格式係 "202609071300"(YYYYMMDDHHMM)
-      const iso = csvTime(stampRaw);
+      // ⚠️2026-09-07:我當咗BulletinTime係YYYYMMDDHHMM(同區域天氣CSV一樣),
+      // 結果parse唔到,個表印咗「undefined分」。而呢條源正正就係最想量嗰條
+      // ——存在、有總部溫度、但滯後幾多完全唔知,即係最關鍵嗰格空咗。
+      // 唔好再估佢咩格式:試幾種,試唔到就直接print原文出嚟。
+      const stampRaw = root.BulletinTime?.Val_Eng ?? root.BulletinTime?.Val_Chi ?? root.BulletinTime ?? null;
+      const dateRaw = root.BulletinDate?.Val_Eng ?? root.BulletinDate ?? null;
+      const iso = mindsTime(stampRaw, dateRaw);
       if (iso) { out.stamp = iso; out.lag = mins(iso); }
+      else out.stampRaw = `BulletinDate=${JSON.stringify(dateRaw)} BulletinTime=${JSON.stringify(stampRaw)}`;
       // 搵天文台總部個溫度欄
       const tempKey = keys.find((k) => /observatory|HKO/i.test(k) && /temp/i.test(k));
       if (tempKey) {
@@ -157,17 +188,23 @@ async function main() {
     console.log(`   ${r.url.replace("https://data.weather.gov.hk/weatherAPI/", "…/")}`);
     console.log(`   ${r.note ?? ""} ${r.ms ? `${r.ms}ms` : ""}`);
     if (r.hko) console.log(`   總部: ${r.sample ?? ""}  時間戳 ${r.stamp?.slice(11, 16) ?? "?"}  ${lag}`);
+    if (r.stampRaw) console.log(`   ⚠️ 讀唔到時間戳,原文: ${r.stampRaw}`);
     if (r.header) console.log(`   欄位: ${r.header}`);
   }
 
   console.log(`\n${"═".repeat(72)}`);
   console.log("💡 結論:邊個對落注有增益?");
   console.log("═".repeat(72));
-  const useful = results.filter((r) => r.ok && r.hko && r.lag !== null);
+  const useful = results.filter((r) => r.ok && r.hko && r.lag !== null && r.lag !== undefined);
+  const noLag = results.filter((r) => r.ok && r.hko && (r.lag === null || r.lag === undefined));
   useful.sort((a, b) => Number(a.lag) - Number(b.lag));
   console.log("\n有天文台總部溫度數據嘅源,按滯後排:");
   for (const r of useful) {
     console.log(`   ${String(r.lag).padStart(6)}分  ${r.name}  (${r.sample ?? ""})`);
+  }
+  if (noLag.length) {
+    console.log("\n有總部溫度但讀唔到時間戳(排唔到序,上面有原文):");
+    for (const r of noLag) console.log(`      ?分  ${r.name}  (${r.sample ?? ""})`);
   }
   console.log("\n⚠️ 滯後係一次抽樣,唔係平均——要睇規律要用rhrread_probe.js跑一段時間。");
   console.log("⚠️ 一個源快唔代表有用:仲要睇個時間戳幾密(密過10分鐘先叫贏1分鐘CSV),");

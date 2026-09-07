@@ -211,6 +211,14 @@ exports.handler = async function (event) {
     response.metarError = metarResult.status === "rejected" ? metarResult.reason.message : "METAR冇可用報文";
   }
 
+  // ⚠️2026-09-07:rhrread(快水喉)個溫度一直攞咗返嚟,但淨係俾pickLive()內部
+  // 攞去做「CSV滯後時嘅後備」,從來冇出過去dashboard——即係你想睇「快水喉
+  // 而家報幾多度、係幾點嗰個數」係睇唔到嘅,因為個payload根本冇。
+  // 佢係整數、但比1分鐘CSV早出,所以要獨立俾出嚟,唔好淨係當後備。
+  if (rrTemp && rrTemp.recordTime) {
+    response.fast = { value: rrTemp.value, recordTime: rrTemp.recordTime };
+  }
+
   if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
     response.rain = rhrreadResult.value.rain; // { localMm, maxMm, maxDistrict, endTime }
   } else {

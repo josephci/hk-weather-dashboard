@@ -254,6 +254,27 @@ async function checkWorker(problems, notes) {
       if (ageMin > 90) problems.push(`即時讀數已經${Math.round(ageMin)}分鐘冇更新(HKO源頭滯後?)`);
       else notes.push(`即時讀數 ${Math.round(ageMin)}分鐘前`);
     }
+
+    // ⚠️2026-09-08加:快水喉(網站JSON)個recordTime係由BulletinTime "1302"
+    // 呢個裸HHMM砌返出嚟嘅。天文台改個格式(例如變ISO、加秒、加日期),
+    // 條正則就match唔到 → recordTime變null → 個溫度照樣顯示得好正常,
+    // 但dashboard個🆕永遠唔會著,你就會覺得「一路都冇新數」。
+    // 呢個正正係呢個repo最典型嗰種靜靜哋壞。所以照consumer嘅規矩讀一次。
+    const web = temp.body.web;
+    if (web && typeof web.value === "number" && web.recordTime) {
+      const t = new Date(web.recordTime).getTime();
+      const age = (Date.now() - t) / 60000;
+      if (!Number.isFinite(t)) problems.push(`快水喉recordTime parse唔到: ${web.recordTime}`);
+      // 實測定時每個鐘:02一份,中間可能加插。>75分鐘即係連定時嗰份都跳咗
+      else if (age > 75 || age < -5) problems.push(`快水喉個數${Math.round(age)}分鐘前(${web.recordTime})——正常應該喺75分鐘內`);
+      else notes.push(`快水喉 ${web.value}° / ${Math.round(age)}分鐘前`);
+    } else if (/BulletinTime/.test(temp.body.webError || "")) {
+      // 格式變咗 = 靜靜哋跌返rhrread,個溫度照顯示,但慢返2.6分鐘,
+      // 而dashboard個🆕永遠唔會著。呢個一定要當problem,唔可以當note。
+      problems.push(`快水喉個時間戳格式變咗,已經靜靜哋跌返慢源: ${temp.body.webError}`);
+    } else if (temp.body.webError) {
+      notes.push(`快水喉今次攞唔到,跌返rhrread: ${temp.body.webError}`);
+    }
   }
 }
 

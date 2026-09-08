@@ -296,6 +296,62 @@ function checkDuplicatedLogic(problems, notes) {
   }
 }
 
+// ⚠️2026-09-08:CSV schema守門。
+// forecast_log.csv而家8欄,而model_diagnostics.js同nightly_check.js
+// 都係硬編碼c[7]攞realized。加一欄就會靜靜哋讀錯——同calibration_log
+// 由4欄變5欄靜咗個feedback loop十日,係同一個伏。
+// 呢度唔驗「個檔存唔存在」,係驗「欄數同reader嘅假設對唔對得上」。
+function checkCsvSchema(problems, notes) {
+  const expect = [
+    ["forecast_log.csv", 8, "model_diagnostics.js / nightly_check.js 硬編碼 c[7] 攞realized"],
+    ["calibration_log.csv", 5, "index.html / nightly_check.js 硬編碼 c[4] 攞hit"],
+    ["station_wedge.csv", 3, "station_wedge.js 讀 date,hkoMax,vhhhMax"],
+  ];
+  for (const [file, n, why] of expect) {
+    if (!fs.existsSync(file)) { notes.push(`${file} 未存在`); continue; }
+    const header = fs.readFileSync(file, "utf-8").split("\n")[0];
+    const got = header.split(",").length;
+    if (got !== n) {
+      problems.push(`${file} 由${n}欄變咗${got}欄——${why},唔一齊改就會讀錯格`);
+    }
+  }
+  notes.push(`CSV欄數同reader假設一致 (${expect.filter(([f]) => fs.existsSync(f)).length}個檔)`);
+}
+
+// ⚠️2026-09-08用戶叫加:branch有commit領先main但冇open PR = 啲改動
+// 卡死喺度冇人merge得到。呢個repo嘅branch係長期重用嘅,PR merge咗之後
+// branch仲喺,再push就變咗孤兒commit。PR #6/7/8/9/13/31全部中過,
+// 用戶問過三次「點解merged唔到」。CLAUDE.md寫咗規矩但靠人記——
+// 靠人記就會漏,所以要自動查。
+async function checkOrphanCommits(problems, notes) {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPOSITORY || "josephci/hk-weather-dashboard";
+  if (!token) { notes.push("冇GITHUB_TOKEN,跳過孤兒commit檢查"); return; }
+  const api = async (p) => {
+    const r = await fetch(`https://api.github.com/repos/${repo}${p}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+    });
+    return r.ok ? r.json() : null;
+  };
+  const branches = await api("/branches?per_page=50");
+  if (!branches) { notes.push("branch API攞唔到,跳過"); return; }
+  const openPrs = (await api("/pulls?state=open&per_page=50")) || [];
+  const withPr = new Set(openPrs.map((p) => p.head?.ref));
+
+  const orphans = [];
+  for (const b of branches) {
+    if (b.name === "main" || b.name === "data") continue;   // data branch係純數據,唔會開PR
+    if (withPr.has(b.name)) continue;
+    const cmp = await api(`/compare/main...${encodeURIComponent(b.name)}`);
+    if (cmp && cmp.ahead_by > 0) orphans.push(`${b.name}(領先${cmp.ahead_by}個commit)`);
+  }
+  if (orphans.length) {
+    problems.push(`有commit卡死冇PR可以merge: ${orphans.join(", ")}——開返個新PR先merge到`);
+  } else {
+    notes.push("冇孤兒commit(所有領先main嘅branch都有open PR)");
+  }
+}
+
 function checkMainPollution(problems) {
   try {
     const n = parseInt(sh(`git log --oneline --since="26 hours ago" --grep="chore: temp log" origin/main | wc -l`), 10);
@@ -331,6 +387,8 @@ async function main() {
   checkBiasProgress(problems, cityLines);
   checkFeedbackLoop(problems, notes);
   checkDuplicatedLogic(problems, notes);
+  checkCsvSchema(problems, notes);
+  await checkOrphanCommits(problems, notes);
   await checkWorker(problems, notes);
   checkMainPollution(problems);
   checkDataBranch(problems, notes);

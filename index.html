@@ -737,9 +737,19 @@ async function pollLive() {
     // 「幾點嗰個數」一定要同個值一齊睇:個整數幾多度,冇講係幾點,係冇用嘅。
     const fastEl = document.getElementById('fastTemp');
     const fastTimeEl = document.getElementById('fastTime');
-    if (json.fast && typeof json.fast.value === 'number') {
-      fastEl.textContent = json.fast.value + '°';
-      const rt = json.fast.recordTime;
+    // ⚠️2026-09-08:改用天文台網站自己個JSON做第一快源。
+    // 實測(market_race真log,每個新讀數第一次出現嘅滯後):
+    //   網站JSON 1.2分  <  rhrread 3.8分  <  1分鐘CSV 8.6分
+    // 而且網站會非整點出bulletin(見過14:21、15:46),rhrread淨係正整點。
+    // 溫度中途升穿關口,網站即刻反映,rhrread要等下一個鐘——
+    // 呢個就係「市場:05-:07就知邊格死咗,但天文台:18先出數」嘅答案。
+    // 網站攞唔到就跌返rhrread,兩條都冇先顯示「--」。
+    const fastSrc = (json.web && typeof json.web.value === 'number') ? json.web
+                  : (json.fast && typeof json.fast.value === 'number') ? json.fast : null;
+    const fastLabel = json.web && typeof json.web.value === 'number' ? '網站' : 'rhrread';
+    if (fastSrc) {
+      fastEl.textContent = fastSrc.value + '°';
+      const rt = fastSrc.recordTime;
       const clock = hkClock(rt) || '?';
       // ⚠️2026-09-08:個整數幾多度、幾點嘅數,兩樣都show咗——但仲差一樣:
       // 「呢個係咪啱啱先出嗰個」。實測rhrread正整點出,滯後3-4分鐘,
@@ -760,12 +770,17 @@ async function pollLive() {
       newEl.style.color = 'var(--warm)';
 
       // 下一個整點讀數幾時出(實測滯後3-4分鐘)
-      const nowMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
-      const nextIn = nowMin < 4 ? (4 - nowMin) : (64 - nowMin);
-      fastTimeEl.textContent = `${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''} · 下個約${nextIn}分鐘後`;
+      // ⚠️網站JSON會非整點出數,所以「下個幾時出」呢句只喺跌返rhrread嗰陣先啱。
+      // 用緊網站就唔好講死——講咗就會令你以為冇嘢等緊,錯過中途嗰個bulletin。
+      let tail = '';
+      if (fastLabel === 'rhrread') {
+        const nowMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
+        tail = ` · 下個約${nowMin < 4 ? (4 - nowMin) : (64 - nowMin)}分鐘後`;
+      }
+      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}`;
     } else {
       fastEl.textContent = '--°';
-      fastTimeEl.textContent = json.rainError ? '⚠️ 攞唔到' : '';
+      fastTimeEl.textContent = json.webError ? `⚠️ ${json.webError}` : '⚠️ 攞唔到';
     }
 
     // METAR/雨量死咗要講,唔好靜靜哋顯示「--」扮「未有數據」

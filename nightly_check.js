@@ -339,6 +339,42 @@ function checkCsvSchema(problems, notes) {
   notes.push(`CSV欄數同reader假設一致 (${expect.filter(([f]) => fs.existsSync(f)).length}個檔)`);
 }
 
+// ⚠️2026-09-08:加咗個「↻更新」掣落即時讀數個標題行,先發現footer嗰個
+// 一路都係 id="refreshBtn",兩個撞名。HTML重複id唔會throw、console乾淨,
+// getElementById淨係攞排前嗰個 → 排後嗰個掣撳極都冇反應。
+// 又係典型「靜靜哋壞」:個掣睇落正常,你撳極冇嘢就以為個網死咗。
+// dashboard成頁靠getElementById砌,所以撞名 = 有嘢冇更新過。
+function checkHtmlIds(problems, notes) {
+  const file = "index.html";
+  if (!fs.existsSync(file)) { problems.push("index.html唔見咗"); return; }
+  const html = fs.readFileSync(file, "utf-8");
+  // ⚠️第一版寫完即刻false-positive:個comment入面提過 id="refreshBtn",
+  // 掃全份檔就當咗係第二個element。呢個repo唔准出假警報(出一次就冇人再信),
+  // 所以掃id之前一定要剝走<script>同HTML comment,淨返真markup。
+  const markup = html
+    .replace(/<script[\s\S]*?<\/script>/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+  const seen = new Map();
+  for (const m of markup.matchAll(/\sid=["']([^"']+)["']/g)) {
+    seen.set(m[1], (seen.get(m[1]) || 0) + 1);
+  }
+  const dup = [...seen].filter(([, n]) => n > 1);
+  if (dup.length) {
+    problems.push(`index.html有重複id(getElementById只攞到第一個,後面嗰個永遠更新唔到): ` +
+      dup.map(([k, n]) => `${k}×${n}`).join(", "));
+  } else {
+    notes.push(`index.html ${seen.size}個id冇撞名`);
+  }
+
+  // 有handler但冇對應element = 個掣/個欄改咗名之後漏咗一邊,一樣係靜靜哋死
+  const wired = new Set([...html.matchAll(/getElementById\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]));
+  const missing = [...wired].filter((id) => !seen.has(id));
+  if (missing.length > 6) {
+    // 少量係正常(有啲element由JS動態生成),多過6個就多數係改名漏咗
+    problems.push(`index.html有${missing.length}個getElementById搵唔到對應element: ${missing.slice(0, 8).join(", ")}…`);
+  }
+}
+
 // ⚠️2026-09-08用戶叫加:branch有commit領先main但冇open PR = 啲改動
 // 卡死喺度冇人merge得到。呢個repo嘅branch係長期重用嘅,PR merge咗之後
 // branch仲喺,再push就變咗孤兒commit。PR #6/7/8/9/13/31全部中過,
@@ -409,6 +445,7 @@ async function main() {
   checkFeedbackLoop(problems, notes);
   checkDuplicatedLogic(problems, notes);
   checkCsvSchema(problems, notes);
+  checkHtmlIds(problems, notes);
   await checkOrphanCommits(problems, notes);
   await checkWorker(problems, notes);
   checkMainPollution(problems);

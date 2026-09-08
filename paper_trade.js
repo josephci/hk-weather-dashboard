@@ -95,12 +95,38 @@ function saveLedger(rows) {
 }
 
 // ---------- 數據 ----------
+// ⚠️2026-09-08深層檢查發現:呢度個slug由頭到尾冇年份,而且冇fallback。
+// 即係fetchMarket()一直return null → LOCK_YES/LOCK_NO/MODEL_YES/MODEL_NO
+// 四個訊號**全部**出唔到。成個紙上交易系統靜靜哋跑緊空氣。
+// (真slug尾有年份:highest-temperature-in-hong-kong-on-september-8-2026)
 async function fetchMarket(city, dateStr) {
-  const [, m, d] = dateStr.split("-").map(Number);
-  const slug = `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}`;
-  const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
-  if (!res.ok) return null;
-  const ev = (await res.json())?.[0];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const slugs = [
+    `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}-${y}`,
+    `highest-temperature-in-${city}-on-${MONTHS[m - 1]}-${d}`,
+  ];
+  let ev = null, slug = slugs[0];
+  for (const sl of slugs) {
+    const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${sl}`);
+    if (!res.ok) return null;
+    const hit = (await res.json())?.[0];
+    if (hit) { ev = hit; slug = sl; break; }
+  }
+  if (!ev) {
+    // 掃weather tag配title(API寫limit=200但實際最多回100,要分頁)
+    const all = [];
+    for (let offset = 0; offset < 600; offset += 100) {
+      const r = await fetch(`https://gamma-api.polymarket.com/events?closed=false&limit=100&offset=${offset}&tag_slug=weather`);
+      if (!r.ok) break;
+      const page = await r.json();
+      if (!Array.isArray(page) || !page.length) break;
+      all.push(...page);
+      if (page.length < 100) break;
+    }
+    const re = new RegExp(`highest temperature in ${city.replace(/-/g, " ")} on ${MONTHS[m - 1]} ${d}\\b`, "i");
+    ev = all.find((e) => re.test(e.title || "")) || null;
+    if (ev) slug = ev.slug;
+  }
   if (!ev) return null;
   const buckets = [];
   let unit = "C";

@@ -112,7 +112,8 @@ async function fetchPolymarketHKTemp(dateStr) {
     // 大JSON parse會爆免費版Worker嘅10ms CPU上限
     const [y, m, d] = dateStr.split("-").map(Number);
     const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-    const slug = `highest-temperature-in-hong-kong-on-${monthNames[m-1]}-${d}`;
+    // ⚠️真slug尾有年份,冇年份一直命中唔到(2026-09-08深層檢查捉到)
+    const slug = `highest-temperature-in-hong-kong-on-${monthNames[m-1]}-${d}-${y}`;
     const res = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`, { cf: { cacheTtl: 0 } });
     if (!res.ok) throw new Error(`Gamma API ${res.status}`);
     const events = await res.json();
@@ -260,7 +261,8 @@ async function checkMetarBreakouts(state, today, events) {
       if (st.alertedMax !== reading.temp) {
         const [y, m, d] = today.split("-").map(Number);
         const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-        const slug = `highest-temperature-in-${ap.citySlug}-on-${monthNames[m-1]}-${d}`;
+        // ⚠️呢個係俾Telegram用嘅link,冇年份就係一條404死link
+        const slug = `highest-temperature-in-${ap.citySlug}-on-${monthNames[m-1]}-${d}-${y}`;
         events.push(
           `✈️🚨 <b>${ap.name} METAR新高</b>：${reading.temp}°C（${reading.obsTime?.slice(11, 16) ?? "?"} UTC報文）\n` +
           `→ 結算源就係METAR整數，「&lt;${reading.temp}°C」bucket已死\n` +

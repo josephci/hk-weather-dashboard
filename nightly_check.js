@@ -257,6 +257,45 @@ async function checkWorker(problems, notes) {
   }
 }
 
+// ⚠️2026-09-08:用戶問「點解整黎整去都有問題」。做咗次深層檢查,答案好清楚:
+// 同一段邏輯喺呢個repo有5-7份copy,而**冇任何嘢驗過佢哋一唔一致**。
+// 每次修好一份,其餘幾份繼續壞,而且唔會throw——要等下次撞到先發現。
+// 實際捉到:
+//   Polymarket slug加年份 → 修咗4份,漏咗paper_trade/worker/probe_polymarket
+//     (paper_trade個fetchMarket一直return null,四個訊號全部出唔到,
+//      成個紙上交易系統跑緊空氣)
+//   σ校準改用blend → 改咗4份,漏咗scan_cities(仲用緊已證實錯嘅乘倍數)
+//   BulletinTime parse → 修咗hko_probe,漏咗market_race
+// 所以呢度唔再驗「個檔啱唔啱」,係驗「幾份copy有冇分叉」。
+function checkDuplicatedLogic(problems, notes) {
+  const read = (f) => { try { return fs.readFileSync(f, "utf-8"); } catch { return null; } };
+
+  // ① Polymarket slug:凡係砌呢個slug嘅檔,都要有年份
+  const slugFiles = ["daily_log.js", "market_race.js", "paper_trade.js", "worker.js",
+    "probe_polymarket.js", "functions/api/polymarket.js", "netlify/functions/polymarket.js"];
+  const noYear = slugFiles.filter((f) => {
+    const c = read(f);
+    return c && c.includes("highest-temperature-in") && !/-\$\{y\}|getUTCFullYear\(\)/.test(c);
+  });
+  if (noYear.length) {
+    problems.push(`Polymarket slug冇年份(一定命中唔到): ${noYear.join(", ")}——真slug尾有年份`);
+  } else {
+    notes.push(`slug年份一致 (${slugFiles.filter((f) => read(f)).length}份)`);
+  }
+
+  // ② σ校準:凡係讀sigmaScale嘅檔,都要一齊讀sigmaAbs(唔可以淨乘倍數)
+  const sigmaFiles = ["index.html", "paper_trade.js", "scan_cities.js", "daily_log.js"];
+  const scaleOnly = sigmaFiles.filter((f) => {
+    const c = read(f);
+    return c && c.includes("sigmaScale") && !c.includes("sigmaAbs");
+  });
+  if (scaleOnly.length) {
+    problems.push(`σ校準淨用倍數冇用sigmaAbs(已證實對香港係錯,corr=−0.15): ${scaleOnly.join(", ")}`);
+  } else {
+    notes.push("σ校準口徑一致(全部用blend)");
+  }
+}
+
 function checkMainPollution(problems) {
   try {
     const n = parseInt(sh(`git log --oneline --since="26 hours ago" --grep="chore: temp log" origin/main | wc -l`), 10);
@@ -291,6 +330,7 @@ async function main() {
   await checkWorkflowRuns(problems, notes);
   checkBiasProgress(problems, cityLines);
   checkFeedbackLoop(problems, notes);
+  checkDuplicatedLogic(problems, notes);
   await checkWorker(problems, notes);
   checkMainPollution(problems);
   checkDataBranch(problems, notes);

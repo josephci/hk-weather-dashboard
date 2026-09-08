@@ -398,7 +398,7 @@
       <span id="metarTime" style="font-size:12px;"></span>
     </div>
     <div class="station-line" style="margin-top:6px;">
-      <span>⚡ 快水喉(整數)：<span id="fastTemp" style="font-family:var(--mono);color:var(--brass);font-weight:700;">--°</span></span>
+      <span id="fastRow" style="cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,.3);">⚡ 快水喉(整數)：<span id="fastTemp" style="font-family:var(--mono);color:var(--brass);font-weight:700;">--°</span> <span id="fastNew"></span></span>
       <span id="fastTime" style="font-size:12px;"></span>
     </div>
   </section>
@@ -664,6 +664,8 @@ function clearError() {
 // 即時讀數
 // ============================================================
 let lastRecordTime = null;
+// 快水喉:記住見過邊個recordTime,用嚟標「呢個係新讀數」
+let lastFastRecordTime = null, fastIsNew = false, fastSeenAt = 0;
 
 async function pollLive() {
   try {
@@ -739,7 +741,28 @@ async function pollLive() {
       fastEl.textContent = json.fast.value + '°';
       const rt = json.fast.recordTime;
       const clock = hkClock(rt) || '?';
-      fastTimeEl.textContent = `${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}`;
+      // ⚠️2026-09-08:個整數幾多度、幾點嘅數,兩樣都show咗——但仲差一樣:
+      // 「呢個係咪啱啱先出嗰個」。實測rhrread正整點出,滯後3-4分鐘,
+      // 而市場大約:12先反應(跟1分鐘CSV,CSV自己滯後8.6分)。
+      // 即係你嘅窗口係 :04 → :12,但你要知道邊一刻個新數到咗先食得到。
+      // 靠自己心算「13:00嘅數 · 5分鐘前」= 慢咗,所以直接標出嚟。
+      const newEl = document.getElementById('fastNew');
+      if (rt && rt !== lastFastRecordTime) {
+        if (lastFastRecordTime !== null) {
+          fastIsNew = true;
+          fastSeenAt = Date.now();
+        }
+        lastFastRecordTime = rt;
+      }
+      // 新讀數標記只留8分鐘——過咗就係市場已經反應完,冇得食
+      if (fastIsNew && Date.now() - fastSeenAt > 8 * 60_000) fastIsNew = false;
+      newEl.textContent = fastIsNew ? '🆕' : '';
+      newEl.style.color = 'var(--warm)';
+
+      // 下一個整點讀數幾時出(實測滯後3-4分鐘)
+      const nowMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
+      const nextIn = nowMin < 4 ? (4 - nowMin) : (64 - nowMin);
+      fastTimeEl.textContent = `${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''} · 下個約${nextIn}分鐘後`;
     } else {
       fastEl.textContent = '--°';
       fastTimeEl.textContent = json.rainError ? '⚠️ 攞唔到' : '';
@@ -2165,6 +2188,15 @@ function tickClock() {
 }
 setInterval(tickClock, 1000); tickClock();
 
+// ⚠️2026-09-08:個「手動重新整理」掣喺footer,要碌到底先撳到。
+// 但你要用佢嗰一刻(整點後:03-:04快水喉出數)係最趕嗰陣——
+// 碌兩下已經蝕咗成分鐘。所以快水喉嗰行本身撳得,即刻拉最新數。
+document.getElementById('fastRow')?.addEventListener('click', () => {
+  const el = document.getElementById('fastTime');
+  if (el) el.textContent = '攞緊…';
+  pollLive();
+});
+
 document.getElementById('refreshBtn').addEventListener('click', () => {
   pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk(); pollCalibration(); pollPmStatus();
   if (REMOTE_CITIES[currentCity]) pollCnCity();
@@ -2187,7 +2219,19 @@ setInterval(whenVisible(pollCalibration), 60 * 60_000); // 一日先更新一次
 pollPmStatus();
 setInterval(whenVisible(pollPmStatus), 2 * 60_000);
 setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
-setInterval(whenVisible(pollLive), LIVE_POLL_MS);
+// ⚠️2026-09-08:平時60秒夠(HKO幾分鐘先更新一次),但整點後嗰幾分鐘
+// 係rhrread出數嘅窗口(實測:03-:04),60秒poll最壞情況慢成分鐘——
+// 而你成個edge就係喺 :04 → :12 之間。所以嗰段時間poll密啲。
+// 用setTimeout自己排,唔用固定interval,先做得到「跟住幾點鐘變頻率」。
+function scheduleLivePoll() {
+  const hkMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
+  const inWindow = hkMin >= 2 && hkMin <= 10;   // 快水喉出數窗口
+  setTimeout(() => {
+    if (!document.hidden) { lastActivePoll = Date.now(); pollLive(); }
+    scheduleLivePoll();
+  }, inWindow ? 20_000 : LIVE_POLL_MS);
+}
+scheduleLivePoll();
 setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);
 setInterval(whenVisible(pollTomorrow), FORECAST_POLL_MS);
 setInterval(whenVisible(pollTrend), 5 * 60_000);

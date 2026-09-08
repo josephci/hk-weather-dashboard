@@ -135,6 +135,37 @@
   }
   .station-line .place { color: var(--text); font-weight: 500; }
 
+  /* ⚠️2026-09-08:原本「撳一下即更新」收埋咗喺⚡行度,冇任何按鈕樣。
+     用戶13:58開頁見個數企咗喺13:02,問「係唔係有咩問題」——
+     佢根本唔知撳得。手動更新係你嘅edge窗口最後一道保險,唔可以隱形。
+     擺喺即時讀數個標題行右邊(大姆指最順手),44px高係iOS最細tap target。
+     ⚠️.live-panel::before係個absolute裝飾層,唔加z-index會蓋住個掣。 */
+  .refresh-btn {
+    margin-left: auto;
+    min-height: 32px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(200,155,60,0.35);
+    background: rgba(200,155,60,0.10);
+    color: var(--brass);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    position: relative;
+    z-index: 2;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .12s ease, background .12s ease;
+  }
+  .refresh-btn:active { transform: scale(0.94); background: rgba(200,155,60,0.24); }
+  .refresh-btn[disabled] { opacity: 0.55; }
+
+  /* ⚡行嘅字最長(源+時間+下一份),iPhone窄screen會斷開「快水喉(整
+     數)」咁樣。準個時間欄自己換行,但個label永遠唔准拆。 */
+  .fast-line { flex-wrap: wrap; gap: 2px 8px; }
+  .fast-line > span:first-child { white-space: nowrap; }
+  .fast-line #fastTime { flex: 1 1 auto; text-align: right; min-width: 0; }
+
   .gauge-panel {
     background: var(--panel);
     border: 1px solid var(--panel-border);
@@ -384,6 +415,7 @@
     <div class="live-row">
       <span class="live-dot" id="liveDot"></span>
       <span class="live-label">即時讀數</span>
+      <button type="button" id="refreshBtn" class="refresh-btn" aria-label="即時更新所有讀數">↻ 更新</button>
     </div>
     <div class="temp-value" id="tempValue">--<span class="unit">°C</span></div>
     <div class="station-line">
@@ -397,7 +429,7 @@
       <span>✈️ 赤鱲角METAR：<span id="metarTemp" style="font-family:var(--mono);">--°</span></span>
       <span id="metarTime" style="font-size:12px;"></span>
     </div>
-    <div class="station-line" style="margin-top:6px;">
+    <div class="station-line fast-line" style="margin-top:6px;">
       <span id="fastRow" style="cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,.3);">⚡ 快水喉(整數)：<span id="fastTemp" style="font-family:var(--mono);color:var(--brass);font-weight:700;">--°</span> <span id="fastNew"></span></span>
       <span id="fastTime" style="font-size:12px;"></span>
     </div>
@@ -564,7 +596,7 @@
   </div><!-- /view-cn -->
 
   <footer>
-    <button class="refresh" id="refreshBtn">手動重新整理</button>
+    <button class="refresh" id="refreshBtnFooter">手動重新整理</button>
     <div style="margin-top:8px;">天文台總部 · 資料源: 天文台 rhrread + Open-Meteo · <span id="lastUpdated"></span></div>
   </footer>
 
@@ -778,7 +810,10 @@ async function pollLive() {
       if (fastLabel === 'rhrread') {
         tail = ` · 下個約${nowMin < 4 ? (4 - nowMin) : (64 - nowMin)}分鐘後`;
       } else {
-        tail = ` · 定時嗰份約${nowMin < 2 ? 2 - nowMin : 62 - nowMin}分鐘後(中間可能加插)`;
+        // ⚠️寫「定時」同「可能提早」兩個字都刪唔得:網站JSON除咗每個鐘:02,
+        // 中途仲會加插(實測14:21、15:46)。淨寫「下一份N分鐘後」會令你以為
+        // 中間冇嘢等,而中途嗰份先係edge(市場未反應)。
+        tail = ` · 下一份定時${nowMin < 2 ? 2 - nowMin : 62 - nowMin}分後(可能提早)`;
       }
       fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}`;
     } else {
@@ -2215,10 +2250,33 @@ document.getElementById('fastRow')?.addEventListener('click', () => {
   pollLive();
 });
 
-document.getElementById('refreshBtn').addEventListener('click', () => {
-  pollLive(); pollForecast(); pollTomorrow(); pollTrend(); pollEdgeHk(); pollCalibration(); pollPmStatus();
-  if (REMOTE_CITIES[currentCity]) pollCnCity();
-});
+// ⚠️2026-09-08:兩個掣(即時讀數個標題行 + footer)行同一段嘢。
+// 之前兩個都寫住 id="refreshBtn" —— HTML重複id,getElementById只會攞到
+// 排前嗰個,footer嗰個會靜靜哋撳極都冇反應(唔會throw,console都乾淨)。
+// 呢個repo典型嘅靜靜哋壞,所以擺埋一齊寫,唔好再分開兩份。
+async function refreshAll(btn) {
+  if (btn?.disabled) return;
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = '更新中…'; }
+  try {
+    // 等真係攞完先俾反應——即刻彈返「✓」但個數仲係舊嘅,
+    // 等於呃你話更新咗,你就會照住個舊數落注。
+    await Promise.allSettled([
+      pollLive(), pollForecast(), pollTomorrow(), pollTrend(),
+      pollEdgeHk(), pollCalibration(), pollPmStatus(),
+      REMOTE_CITIES[currentCity] ? pollCnCity() : null,
+    ]);
+  } finally {
+    if (btn) {
+      btn.textContent = '✓ 已更新';
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 1200);
+    }
+  }
+}
+for (const id of ['refreshBtn', 'refreshBtnFooter']) {
+  const btn = document.getElementById(id);
+  btn?.addEventListener('click', () => refreshAll(btn));
+}
 
 // 背景tab唔poll:收埋嘅tab照poll係浪費function credit,
 // 返嚟嗰下visibilitychange會即刻補一次

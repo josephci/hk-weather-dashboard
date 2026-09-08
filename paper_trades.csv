@@ -1,0 +1,4 @@
+openedAt,date,city,bucket,side,signal,marketPrice,fillPrice,stake,realizedMax,result,pnl
+2026-09-08T12:11:42.615Z,2026-09-08,london,19°C,NO,MODEL_NO,3,5,10,,,
+2026-09-08T12:11:42.868Z,2026-09-08,paris,26°C,NO,MODEL_NO,33,35,10,,,
+2026-09-08T12:11:42.868Z,2026-09-08,paris,27°C,NO,MODEL_NO,70,72,10,,,

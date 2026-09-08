@@ -42,6 +42,62 @@ async function checkWorkflowRuns(problems, notes) {
     problems.push(`Actions「${name}」過去26hr fail咗${n}次`);
   }
   notes.push(`過去26hr ${recent.length}個run,${Object.values(failsByName).reduce((a, b) => a + b, 0)}個fail`);
+
+  await checkScheduleCadence(problems, notes, repo, token);
+}
+
+// 由cron算返一日應該跑幾多次(淨係識 */N 分鐘嗰種——高頻嗰啲先係要查嘅)
+function cronRunsPer26h(cron) {
+  const m = String(cron).trim().match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n > 0 ? Math.round((26 * 60) / n) : null;
+}
+
+// ⚠️2026-09-09:用戶問點解Telegram啲香港警報咁疏。查GitHub API先發現——
+// temp-alerts.yml寫住 cron "*/5 * * * *"(一日288次),
+// 實際26個鐘得20幾次,即係~72分鐘先一次。
+// **每一個run都係綠色success**,所以上面「有冇fail」嗰個check一世都捉唔到。
+// GitHub係會靜靜哋跳過高頻schedule嘅,佢唔會報錯,只係唔跑。
+// 而用戶個edge窗口得8分鐘 —— 72分鐘一次嘅警報等於冇。
+// 所以呢度驗嘅係「真係跑咗幾多次」,唔係「跑嗰啲有冇fail」。
+async function checkScheduleCadence(problems, notes, repo, token) {
+  let files = [];
+  try { files = fs.readdirSync(".github/workflows").filter((f) => /\.ya?ml$/.test(f)); } catch { return; }
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
+
+  for (const file of files) {
+    const yml = fs.readFileSync(`.github/workflows/${file}`, "utf-8");
+    // ⚠️一個檔可以有幾個cron(daily-bias就有7個)。淨睇第一個就會漏——
+    // 揀最密嗰個,因為個workflow嘅實際頻率係由最密嗰條決定。
+    let cron = null, expect = null;
+    for (const m of yml.matchAll(/cron:\s*["']([^"']+)["']/g)) {
+      const n = cronRunsPer26h(m[1]);
+      if (n !== null && (expect === null || n > expect)) { expect = n; cron = m[1]; }
+    }
+    if (!expect) continue; // 冇 */N 嗰種(一日跑幾次嗰啲疏本身就正常),唔查
+
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=100&event=schedule`,
+      { headers });
+    if (!res.ok) { notes.push(`${file} runs API ${res.status},跳過cadence檢查`); continue; }
+    const runs = ((await res.json()).workflow_runs || [])
+      .filter((r) => Date.now() - new Date(r.created_at) < 26 * 3600e3);
+
+    // 攞夠100個 = 撞到API上限,數唔準,寧願唔講都好過報個錯數
+    if (runs.length >= 100) { notes.push(`${file} 26hr內≥100個run,cadence正常`); continue; }
+    if (runs.length < 2) { problems.push(`${file} 排程 ${cron} 但26個鐘只跑咗${runs.length}次——當佢冇跑`); continue; }
+
+    const gapMin = (26 * 60) / runs.length;
+    const ratio = runs.length / expect;
+    if (ratio < 0.5) {
+      problems.push(`${file} 排程寫住 ${cron}(26hr應該${expect}次),實際只跑咗${runs.length}次` +
+        ` = 平均${Math.round(gapMin)}分鐘先一次。GitHub靜靜哋跳咗schedule(每個run都係success,睇fail數係查唔到嘅),` +
+        `靠佢做即時警報唔work`);
+    } else {
+      notes.push(`${file} cadence ${runs.length}/${expect}次 (~${Math.round(gapMin)}分鐘一次)`);
+    }
+  }
 }
 
 // 一個log檔近兩日有冇「有預測」嘅行——2026-07實戰教訓:settle正常跑緊

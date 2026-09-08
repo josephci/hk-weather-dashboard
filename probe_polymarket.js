@@ -93,8 +93,9 @@ async function checkLines() {
 
 // ---------- ② slug命唔命中 ----------
 async function checkSlug(label, date) {
-  const [, m, d] = date.split("-").map(Number);
-  const slug = `highest-temperature-in-hong-kong-on-${MONTHS[m - 1]}-${d}`;
+  const [y, m, d] = date.split("-").map(Number);
+  // ⚠️真slug尾有年份(2026-08-26由API response查實)
+  const slug = `highest-temperature-in-hong-kong-on-${MONTHS[m - 1]}-${d}-${y}`;
   const r = await get(`https://gamma-api.polymarket.com/events?slug=${slug}`);
   if (!r.ok) { console.log(`  ${label} ${date}  ✗ HTTP ${r.status ?? r.err}`); return null; }
   let arr = [];

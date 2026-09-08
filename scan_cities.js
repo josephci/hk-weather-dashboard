@@ -181,9 +181,22 @@ async function cityModelProbs(city, cityKey, unit) {
   const mean = values.reduce((a,b)=>a+b,0)/n;
   let std = Math.sqrt(values.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(n-1,1));
   std = Math.max(std, unit === "F" ? STD_FLOOR * 1.8 : STD_FLOOR);
-  // σ校準:模型分歧唔等於預測誤差(香港實測差3.58倍),有實測倍數就用返
-  const sScale = city.hasBias ? biasAll.sigmaScale : biasAll.cities?.[cityKey]?.sigmaScale;
-  std *= sScale || (corrected ? 1 : NO_BIAS_STD_INFLATE);
+  // σ校準:模型分歧唔等於預測誤差。
+  // ⚠️2026-09-08深層檢查發現:呢度淨係乘sigmaScale,冇用sigmaAbs/sigmaWeight。
+  // 但我哋2026-08-20已經量到「乘倍數」係錯嘅修法——香港
+  // corr(模型σ,|誤差|)=−0.15,即係模型σ冇per-day預測力,乘3.05等於放大噪音:
+  //   模型σ=0.20嘅日 → 0.61°(過份自信)   模型σ=1.68嘅日 → 5.1°(冇資訊)
+  // index.html/paper_trade.js/daily_log.js全部一早改咗用blend,得呢份漏咗。
+  // 公式同calibratedStd()一致: σ²=w·(σ×scale)²+(1−w)·sigmaAbs²
+  const sCfg = city.hasBias ? biasAll : (biasAll.cities?.[cityKey] || {});
+  const sAbs = sCfg.sigmaAbs ? sCfg.sigmaAbs * (unit === "F" ? 1.8 : 1) : null;
+  const sScale = sCfg.sigmaScale || null;
+  if (sAbs) {
+    const w = Math.min(Math.max(sCfg.sigmaWeight ?? 0, 0), 1);
+    std = Math.sqrt(w * (std * (sScale || 1)) ** 2 + (1 - w) * sAbs ** 2);
+  } else {
+    std *= sScale || (corrected ? 1 : NO_BIAS_STD_INFLATE);
+  }
 
   // 逐度機率map（範圍闊啲，°F可以去到110+）
   const lo = Math.floor(mean - 6 * std) - 2, hi = Math.ceil(mean + 6 * std) + 2;

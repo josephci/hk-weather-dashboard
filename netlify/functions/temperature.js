@@ -265,7 +265,11 @@ exports.handler = async function (event) {
   if (webResult.status === "fulfilled" && webResult.value?.recordTime) {
     response.web = webResult.value;
   } else {
-    response.webError = webResult.status === "rejected" ? webResult.reason.message : "網站JSON冇時間戳";
+    // ⚠️分死因:網路死(間中,自己會返)vs BulletinTime格式變咗(要即刻改code)。
+    // 兩樣都寫「冇時間戳」就等於冇log——所以格式嗰個要print返收到乜。
+    response.webError = webResult.status === "rejected"
+      ? webResult.reason.message
+      : `網站JSON個BulletinTime砌唔到時間(要HHMM,收到:${JSON.stringify(webResult.value?.bulletinRaw ?? null)})`;
   }
 
   if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {

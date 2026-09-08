@@ -664,8 +664,6 @@ function clearError() {
 // 即時讀數
 // ============================================================
 let lastRecordTime = null;
-// 快水喉:記住見過邊個recordTime,用嚟標「呢個係新讀數」
-let lastFastRecordTime = null, fastIsNew = false, fastSeenAt = 0;
 
 async function pollLive() {
   try {
@@ -756,26 +754,31 @@ async function pollLive() {
       // 而市場大約:12先反應(跟1分鐘CSV,CSV自己滯後8.6分)。
       // 即係你嘅窗口係 :04 → :12,但你要知道邊一刻個新數到咗先食得到。
       // 靠自己心算「13:00嘅數 · 5分鐘前」= 慢咗,所以直接標出嚟。
+      // ⚠️2026-09-08用戶13:34開頁,見到「13:02嘅數」但冇🆕,問「係唔係真係更新左」。
+      // 原本個🆕靠「開頁之後recordTime變咗」判斷,即係一reload/一鎖屏返嚟,
+      // 第一次見到嗰份就當baseline,永遠唔標。iPhone Safari切app返嚟正正就係咁,
+      // 結果個標記喺你最需要嗰陣(啱啱開頁想睇有冇得食)一定係熄嘅。
+      // 改用份bulletin自己嘅年齡:≤8分鐘就係新——reload幾多次都照準,
+      // 唔使靠個頁一直開住。8分鐘係因為市場大約:12反應完,過咗就冇得食。
       const newEl = document.getElementById('fastNew');
-      if (rt && rt !== lastFastRecordTime) {
-        if (lastFastRecordTime !== null) {
-          fastIsNew = true;
-          fastSeenAt = Date.now();
-        }
-        lastFastRecordTime = rt;
-      }
-      // 新讀數標記只留8分鐘——過咗就係市場已經反應完,冇得食
-      if (fastIsNew && Date.now() - fastSeenAt > 8 * 60_000) fastIsNew = false;
-      newEl.textContent = fastIsNew ? '🆕' : '';
+      const ageMin = rt ? (Date.now() - new Date(rt).getTime()) / 60_000 : NaN;
+      const isFresh = Number.isFinite(ageMin) && ageMin >= -1 && ageMin <= 8;
+      newEl.textContent = isFresh ? '🆕' : '';
       newEl.style.color = 'var(--warm)';
 
-      // 下一個整點讀數幾時出(實測滯後3-4分鐘)
-      // ⚠️網站JSON會非整點出數,所以「下個幾時出」呢句只喺跌返rhrread嗰陣先啱。
-      // 用緊網站就唔好講死——講咗就會令你以為冇嘢等緊,錯過中途嗰個bulletin。
+      // 下一份幾時出。
+      // ⚠️2026-09-07 market_race實測342個poll,網站JSON嘅bulletin:
+      //   13:02 / 14:02 / 14:21 / 15:02 / 15:46 / 16:02
+      // 即係每個鐘:02一份定時嘅,中間仲會加插非整點嘅(溫度郁得快嗰陣)。
+      // 所以只可以講「定時嗰份約HH:02」,唔可以講死——
+      // 講死就會令你以為中間冇嘢等,而中途嗰份先係你嘅edge(市場未反應)。
+      // rhrread嗰條線淨係正整點出,滯後3-4分鐘,可以講到幾多分鐘後。
       let tail = '';
+      const nowMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
       if (fastLabel === 'rhrread') {
-        const nowMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
         tail = ` · 下個約${nowMin < 4 ? (4 - nowMin) : (64 - nowMin)}分鐘後`;
+      } else {
+        tail = ` · 定時嗰份約${nowMin < 2 ? 2 - nowMin : 62 - nowMin}分鐘後(中間可能加插)`;
       }
       fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}`;
     } else {

@@ -86,14 +86,22 @@ function mindsTime(timeRaw, dateRaw) {
     const hhmm = t.padStart(4, "0");
     return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${hhmm.slice(0,2)}:${hhmm.slice(2,4)}:00+08:00`;
   }
-  // ③ 已經係ISO或者Date食得落
-  if (Date.parse(t)) return new Date(t).toISOString();
-  // ④ 淨係HH:MM → 當係今日(香港)
+  // ④ 淨係HHMM冇日期(實測就係呢個:BulletinTime="1300")→ 當係今日(香港)
+  if (/^\d{3,4}$/.test(t)) {
+    const hhmm = t.padStart(4, "0");
+    const hk = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+    return `${hk}T${hhmm.slice(0,2)}:${hhmm.slice(2,4)}:00+08:00`;
+  }
+  // ⑤ 淨係HH:MM → 當係今日(香港)
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
   if (m) {
     const hk = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
     return `${hk}T${m[1].padStart(2,"0")}:${m[2]}:00+08:00`;
   }
+  // ⑥ ISO或者Date食得落。⚠️一定要排喺HHMM之後——Date.parse("1300")
+  //    會當咗「1300年」,排前面就會食咗上面個case,重蹈覆轍
+  const v = Date.parse(t);
+  if (!Number.isNaN(v) && Math.abs(Date.now() - v) < 86400e3) return new Date(v).toISOString();
   return null;
 }
 

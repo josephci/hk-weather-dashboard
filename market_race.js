@@ -209,8 +209,20 @@ function parseStamp(s, ch) {
     const v = Date.parse(t);
     return Number.isNaN(v) ? null : v;
   }
+  // ⚠️2026-09-07:hkoWeb跌到呢度,而佢個BulletinTime係淨HHMM(例如"1300")。
+  // Date.parse("1300")當咗做「1300年」,個滯後就變咗3.8億分鐘(726年)。
+  // 個log印出嚟係 中位318558622.2分鐘——一眼睇得出係垃圾,但個analysis
+  // 照計照排,差啲就當咗真數據睇。呢啲數字唔會throw,只會靜靜哋錯。
+  if (/^\d{3,4}$/.test(s)) {
+    const hhmm = s.padStart(4, "0");
+    const hkToday = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+    return Date.parse(`${hkToday}T${hhmm.slice(0,2)}:${hhmm.slice(2,4)}:00+08:00`);
+  }
   const v = Date.parse(s);
-  return Number.isNaN(v) ? null : v;
+  if (Number.isNaN(v)) return null;
+  // 最後一道閘:parse到但明顯離譜(超過一日)就當讀唔到,唔好污染個analysis
+  if (Math.abs(Date.now() - v) > 86400e3) return null;
+  return v;
 }
 
 // 市場顯著郁動嗰陣,各渠道知咗未

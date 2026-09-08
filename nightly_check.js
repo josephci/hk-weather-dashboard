@@ -253,6 +253,18 @@ async function checkWorker(problems, notes) {
       const ageMin = (Date.now() - new Date(rt).getTime()) / 60000;
       if (ageMin > 90) problems.push(`即時讀數已經${Math.round(ageMin)}分鐘冇更新(HKO源頭滯後?)`);
       else notes.push(`即時讀數 ${Math.round(ageMin)}分鐘前`);
+
+      // ⚠️2026-09-08:index.html個livePollDelay()硬編碼咗「每十分鐘嘅:07-:10
+      // poll密啲」,係由實測嚟嘅——latest_1min_temperature.csv雖然叫「1min」,
+      // 實際係10分鐘出一份(戳:00/:10/:20…),滯後7.5-9.1分(n=18)。
+      // 天文台一改cadence(例如真係變1分鐘、或者變5分鐘),個窗口就對唔正:
+      // 個page照行、個數照顯示,只係又靜靜哋慢返成分鐘——用戶就係咁報上嚟。
+      // 所以驗個戳仲係咪10分鐘一格。
+      const stampMin = new Date(rt).getUTCMinutes();
+      if (stampMin % 10 !== 0) {
+        problems.push(`即時讀數個戳係:${String(stampMin).padStart(2, "0")},唔再係10分鐘一格(${rt})——` +
+          `index.html個livePollDelay()窗口係照10分鐘cadence排嘅,要重新量過再改`);
+      }
     }
 
     // ⚠️2026-09-08加:快水喉(網站JSON)個recordTime係由BulletinTime "1302"

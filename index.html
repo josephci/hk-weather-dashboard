@@ -610,7 +610,10 @@ const LAT = 22.302, LON = 114.174;
 const METRIC = "max"; // "max" 或 "min"
 const TEMP_ENDPOINT = "/api/temperature"; // 平台中立路徑:Netlify經redirect、Cloudflare Pages直接命中
 const MODELS = ["gfs_seamless","ecmwf_ifs025","icon_seamless","ukmo_seamless","gem_seamless","jma_seamless"];
-const LIVE_POLL_MS = 60_000; // HKO數據幾分鐘先更新一次,30秒poll係浪費function credit
+// ⚠️2026-09-08改:原本60秒,注釋寫「HKO數據幾分鐘先更新一次,30秒poll係浪費」。
+// 呢句一半啱一半錯,而錯嗰半令你蝕咗成分鐘:數據係唔係成日更新,
+// 但佢**幾時**更新係揀得準嘅(見livePollDelay)。閒時30秒,到點嗰陣10秒。
+const LIVE_POLL_MS = 30_000;
 const FORECAST_POLL_MS = 10 * 60_000;
 // 如果你有部署 bias.json（見 update_bias.js），填返個raw URL，例如：
 // "https://raw.githubusercontent.com/你的用戶名/你的repo/main/bias.json"
@@ -2295,17 +2298,37 @@ setInterval(whenVisible(pollCalibration), 60 * 60_000); // 一日先更新一次
 pollPmStatus();
 setInterval(whenVisible(pollPmStatus), 2 * 60_000);
 setTimeout(pollEdgeHk, 4000); // 等forecast先load完,edge先有模型機率用
-// ⚠️2026-09-08:平時60秒夠(HKO幾分鐘先更新一次),但整點後嗰幾分鐘
-// 係rhrread出數嘅窗口(實測:03-:04),60秒poll最壞情況慢成分鐘——
-// 而你成個edge就係喺 :04 → :12 之間。所以嗰段時間poll密啲。
-// 用setTimeout自己排,唔用固定interval,先做得到「跟住幾點鐘變頻率」。
+// ⚠️2026-09-08用戶報:「天文台更新左31.5,個page仲係31.6,差左成一分鐘」。
+// 跑咗market_race_log.csv(每30秒poll,3個鐘,341個poll)量返:
+//
+//   latest_1min_temperature.csv 個名叫「1min」,但實際係10分鐘出一份,
+//   戳係 :00/:10/:20/…,而每一份喺**個戳之後7.5–9.1分鐘**先到
+//   (n=18,中位8.6分,散得好窄)。
+//
+// 即係話新數落嚟嘅時刻係揀得準嘅:每個十分鐘嘅 :07–:10 嗰段。
+// 原本閒時60秒poll一次,啱啱撞正呢段就會遲最多一分鐘先見到——
+// 就係你見到嗰個。唔係壞咗,係我個poll排得太疏。
+//
+// 所以而家:
+//   每十分鐘嘅 :07–:10  → 10秒(即時讀數落嚟嗰陣)
+//   每個鐘嘅 :02–:05    → 10秒(快水喉定時嗰份,實測滯後1.0–1.3分)
+//   其餘                → 30秒(中途加插嗰啲bulletin估唔到,只可以縮短baseline)
+//
+// ⚠️呢兩個窗口係硬編碼咗上面量到嗰個節奏。天文台一改cadence就會靜靜哋失效
+// (個page照行,只係又慢返),所以nightly_check有checkLiveCadence()驗住個戳
+// 係咪仲係10分鐘一格。
+function livePollDelay() {
+  const d = new Date(Date.now() + 8 * 3600e3);
+  const m = d.getUTCMinutes();
+  if (m % 10 >= 7) return 10_000;
+  if (m >= 2 && m <= 5) return 10_000;
+  return LIVE_POLL_MS;
+}
 function scheduleLivePoll() {
-  const hkMin = new Date(Date.now() + 8 * 3600e3).getUTCMinutes();
-  const inWindow = hkMin >= 2 && hkMin <= 10;   // 快水喉出數窗口
   setTimeout(() => {
     if (!document.hidden) { lastActivePoll = Date.now(); pollLive(); }
     scheduleLivePoll();
-  }, inWindow ? 20_000 : LIVE_POLL_MS);
+  }, livePollDelay());
 }
 scheduleLivePoll();
 setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);

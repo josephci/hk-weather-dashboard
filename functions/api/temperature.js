@@ -108,6 +108,47 @@ async function fetchRhrread() {
   return { rain, temp };
 }
 
+// ⭐天文台網站自己個JSON——2026-09-08實測係最快嗰條。
+//
+// 用戶觀察:「天文台18分出數係32度,但市場05-07分31度已經死咗」。
+// 查market_race個log,答案喺呢度:
+//   真出街滯後(每個新讀數第一次出現):
+//     網站JSON  中位1.2分  ← 最快
+//     rhrread   中位3.8分
+//     1分鐘CSV  中位8.6分  ← dashboard之前個大字用呢條
+//   即係網站快CSV 7.4分鐘。
+//
+// ⚠️仲關鍵嘅係:佢會**非整點**出bulletin(log見到14:21、15:46),
+// 唔似rhrread淨係正整點。所以溫度中途升穿關口,佢會即刻反映,
+// 而rhrread要等下一個鐘。呢個先係「市場點解喺:05-:07就知邊格死咗」。
+//
+// 之前market_race個①表印「318558622分鐘」係因為BulletinTime係淨HHMM
+// (例如"1546"),Date.parse當咗做1546年。修好之後排序完全掉轉。
+//
+// 個站會揀客,要俾User-Agent同Referer。整數精度,同rhrread一樣。
+async function fetchHkoWeb() {
+  const res = await fetch("https://www.hko.gov.hk/json/DYN_DAT_MINDS_RHRREAD.json", {
+    cache: "no-store",
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://www.hko.gov.hk/" },
+  });
+  if (!res.ok) throw new Error(`HKO網站JSON ${res.status}`);
+  const root = (await res.json())?.DYN_DAT_MINDS_RHRREAD || {};
+  const key = Object.keys(root).find((k) => /observatory|HKO/i.test(k) && /temp/i.test(k));
+  if (!key) throw new Error("網站JSON冇總部溫度欄(格式變咗?)");
+  const value = parseFloat(root[key]?.Val_Eng ?? root[key]);
+  if (Number.isNaN(value)) throw new Error("網站JSON個溫度讀唔到");
+
+  // BulletinTime係淨HHMM香港時間(例如"1546"),冇日期
+  const t = String(root.BulletinTime?.Val_Eng ?? root.BulletinTime ?? "").trim();
+  let recordTime = null;
+  if (/^\d{3,4}$/.test(t)) {
+    const hhmm = t.padStart(4, "0");
+    const hkDate = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+    recordTime = `${hkDate}T${hhmm.slice(0, 2)}:${hhmm.slice(2, 4)}:00+08:00`;
+  }
+  return { value, recordTime, bulletinRaw: t || null };
+}
+
 // 揀邊條水喉:CSV有0.1°精度優先;但CSV滯後>20分鐘而rhrread更新鮮就轉用
 export function pickLive(csvLive, rrTemp) {
   const age = (t) => t ? Date.now() - new Date(t).getTime() : Infinity;
@@ -158,8 +199,8 @@ export async function onRequest(context) {
     }
   }
 
-  const [liveResult, maxMinResult, metarResult, rhrreadResult] = await Promise.allSettled([
-    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread(),
+  const [liveResult, maxMinResult, metarResult, rhrreadResult, webResult] = await Promise.allSettled([
+    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread(), fetchHkoWeb(),
   ]);
 
   const response = {};
@@ -193,6 +234,13 @@ export async function onRequest(context) {
     response.fast = { value: rrTemp.value, recordTime: rrTemp.recordTime };
   }
 
+  // ⭐最快嗰條:天文台網站自己個JSON(中位1.2分鐘,而且會非整點出bulletin)
+  if (webResult.status === "fulfilled" && webResult.value?.recordTime) {
+    response.web = webResult.value;
+  } else {
+    response.webError = webResult.status === "rejected" ? webResult.reason.message : "網站JSON冇時間戳";
+  }
+
   if (rhrreadResult.status === "fulfilled" && rhrreadResult.value?.rain) {
     response.rain = rhrreadResult.value.rain;
   } else {
@@ -207,6 +255,6 @@ export async function onRequest(context) {
   // 而個1分鐘CSV正正係四條入面最唔穩嗰條。
   // 依家:仲有嘢俾得到就回200,由client逐格自己決定畫唔畫;
   //       四條全死先回502(嗰陣真係乜都冇)。
-  const anyUseful = response.live || response.today || response.metars || response.rain;
+  const anyUseful = response.live || response.today || response.metars || response.rain || response.web;
   return json(response, anyUseful ? 200 : 502);
 }

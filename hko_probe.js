@@ -180,6 +180,180 @@ async function probe([name, url, kind]) {
   return out;
 }
 
+// ============================================================
+// ⚠️2026-09-09加:自動搵源,唔再靠我估個URL。
+//
+// 點解要加:用戶11:48影低兩張圖——天文台自己個「分區天氣資訊平台」
+// 站頁已經有 11:40 嘅30.2°,而我哋條1分鐘CSV仲停喺 11:30。
+// 實測CSV滯後7.5–9.1分,即係11:40嗰格最快11:47.5先到,佢冇壞,
+// 但天文台個網頁**就係攞得快過開放數據CSV**。
+// 差10分鐘。對一個:05–:12嘅窗口嚟講,10分鐘等於成局。
+//
+// 上面個TARGETS係我逐條估出嚟嘅,估唔到嗰個平台個endpoint。
+// 所以呢度改成爬:由天文台首頁出發,搵含「分區」嗰啲頁,
+// 再喺頁入面挖晒所有 .json/.php/.csv,逐個開嚟睇有冇總部溫度。
+//
+// ⚠️純讀+print,唔會改檔。爬嘅範圍鎖死喺天文台自己嘅domain。
+// ============================================================
+// ⚠️2026-09-09第一輪爬嘅結果:由首頁爬到個平台真身係
+//   www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html?ele=Temperature
+// 但成8版頁淨係挖到1條data URL,而且冇總部 → 佢啲data URL係JS砌出嚟嘅,
+// 唔會以完整字串形式出現喺HTML。所以第二輪要落埋去啲JS檔度掘。
+const CRAWL_SEEDS = [
+  "https://www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html?ele=Temperature",
+  "https://www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html",
+  "https://www.hko.gov.hk/tc/index.html",
+  "https://maps.weather.gov.hk/",
+];
+const ALLOW_HOST = /(^|\.)(hko\.gov\.hk|weather\.gov\.hk)$/i;
+const HQ_HINT = /香港天文台|Hong Kong Observatory|"HKO"|>HKO</i;
+
+async function getText(url, ms = 12000) {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(ms),
+      headers: { "User-Agent": "Mozilla/5.0", Referer: "https://www.hko.gov.hk/" },
+    });
+    return { ok: res.ok, status: res.status, body: await res.text() };
+  } catch (e) { return { ok: false, status: null, err: e.name === "TimeoutError" ? "timeout" : e.message }; }
+}
+
+function absUrls(body, base) {
+  const out = new Set();
+  // 連相對路徑一齊收——個平台啲data URL多數係相對嘅
+  // ⚠️第二輪漏咗.txt,而個平台真正嗰兩個檔(latestReadings_AWS1_v2.txt、
+  // gislatest_portal.txt)正正就係.txt。差啲就因為個regex而miss咗。
+  for (const m of body.matchAll(/["'(]([^"'()\s]+?\.(?:json|php|csv|txt)(?:\?[^"'()\s]*)?)["')]/gi)) {
+    try {
+      const u = new URL(m[1], base);
+      if (ALLOW_HOST.test(u.hostname)) out.add(u.href);
+    } catch { /* 唔係URL就算 */ }
+  }
+  return [...out];
+}
+
+// ⚠️2026-09-09第二輪掘到嘅金:個平台個 irwip-map-config.js 入面有
+//   /wxinfo/aws/
+//   ../../../wxinfo/awsgis/        ← 由 /tc/wxinfo/awsgis/files/ 解返出嚟 = /wxinfo/awsgis/
+//   latestReadings_AWS1_v2.txt
+//   gislatest_portal.txt
+// 呢兩個.txt十有八九就係「分區天氣資訊平台」啲即時讀數。
+// 用戶11:48見到佢個站頁有11:40嘅30.2°,而我哋條CSV仲係11:30——
+// 就係要驗呢兩個檔係咪真係早過開放數據CSV。
+// 直接開嚟睇格式同時間戳,唔好再靠爬。
+async function probeAwsGis() {
+  console.log("\n  🎯 直接開個平台自己嗰兩個檔:");
+  const cands = [
+    "https://www.hko.gov.hk/wxinfo/awsgis/latestReadings_AWS1_v2.txt",
+    "https://www.hko.gov.hk/wxinfo/awsgis/gislatest_portal.txt",
+    "https://www.hko.gov.hk/tc/wxinfo/awsgis/latestReadings_AWS1_v2.txt",
+    "https://www.hko.gov.hk/tc/wxinfo/awsgis/gislatest_portal.txt",
+    "https://www.hko.gov.hk/wxinfo/aws/latestReadings_AWS1_v2.txt",
+  ];
+  for (const u of cands) {
+    const r = await getText(u, 10000);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${u.replace("https://www.hko.gov.hk", "")}`); continue; }
+    const body = r.body;
+    console.log(`    ✓ ${body.length}B  ${u.replace("https://www.hko.gov.hk", "")}`);
+    // 頭幾行睇格式
+    const lines = body.split(/\r?\n/).filter((l) => l.trim());
+    console.log(`      頭5行:`);
+    for (const l of lines.slice(0, 5)) console.log(`        ${l.slice(0, 120)}`);
+    // 有冇總部?(呢個平台多數用站碼,所以連HKO/HKA呢啲碼一齊搵)
+    const hq = lines.filter((l) => /香港天文台|Hong Kong Observatory|\bHKO\b/i.test(l)).slice(0, 3);
+    if (hq.length) {
+      console.log(`      ⭐總部嗰行:`);
+      for (const l of hq) console.log(`        ${l.slice(0, 160)}`);
+    } else {
+      console.log(`      ⚠️搵唔到總部字眼——可能用緊站碼,總行數 ${lines.length}`);
+    }
+  }
+}
+
+async function discoverSources() {
+  console.log("\n" + "═".repeat(72));
+  console.log("🔎 自動搵源:天文台個網頁攞緊邊條data線?");
+  console.log("═".repeat(72));
+
+  // ① 由seed頁搵「分區天氣資訊平台」嗰類頁
+  const pages = new Set(CRAWL_SEEDS);
+  for (const seed of CRAWL_SEEDS) {
+    const r = await getText(seed);
+    console.log(`  seed ${seed.replace("https://", "")} → ${r.ok ? "HTTP " + r.status : "✗ " + (r.err ?? r.status)}`);
+    if (!r.ok) continue;
+    for (const m of r.body.matchAll(/href=["']([^"']+)["'][^>]*>([^<]{0,40})/gi)) {
+      const [, href, text] = m;
+      if (!/分區|regional|rwip|ts\/|element/i.test(href + text)) continue;
+      try {
+        const u = new URL(href, seed);
+        if (ALLOW_HOST.test(u.hostname)) pages.add(u.href);
+      } catch { /* skip */ }
+    }
+  }
+  const pageList = [...pages].slice(0, 12);
+  console.log(`\n  搵到 ${pageList.length} 個候選頁:`);
+  for (const p of pageList) console.log(`    ${p.replace("https://", "")}`);
+
+  // ② 每頁挖晒data URL,連埋佢load緊嘅JS一齊挖
+  //    (第一輪只挖HTML,得1條;個平台啲URL係喺JS入面砌嘅)
+  const dataUrls = new Set();
+  const scripts = new Set();
+  const fragments = new Map(); // 路徑碎片 → 喺邊個JS見到
+  for (const p of pageList) {
+    const r = await getText(p);
+    if (!r.ok) continue;
+    for (const u of absUrls(r.body, p)) dataUrls.add(u);
+    for (const m of r.body.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) {
+      try {
+        const u = new URL(m[1], p);
+        if (ALLOW_HOST.test(u.hostname)) scripts.add(u.href);
+      } catch { /* skip */ }
+    }
+  }
+  const scriptList = [...scripts].slice(0, 20);
+  console.log(`\n  啲頁load緊 ${scriptList.length} 個自家JS,逐個掘:`);
+  for (const s of scriptList) {
+    const r = await getText(s);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${s.replace("https://", "")}`); continue; }
+    const before = dataUrls.size;
+    for (const u of absUrls(r.body, s)) dataUrls.add(u);
+    // JS入面多數係 "…/dat/" + ele + ".json" 咁砌,所以連碎片都要收
+    const frags = new Set();
+    for (const m of r.body.matchAll(/["'`]([\w./?=&-]*(?:aws|gis|\/dat\/|latest|minute|rwip|temp|obs)[\w./?=&-]*)["'`]/gi)) {
+      const f = m[1];
+      if (f.length > 3 && f.length < 90 && /[/.]/.test(f)) frags.add(f);
+    }
+    for (const f of frags) if (!fragments.has(f)) fragments.set(f, s);
+    console.log(`    ✓ ${String(r.body.length).padStart(7)}B  +${dataUrls.size - before}條URL  ${frags.size}個碎片  ${s.replace("https://www.hko.gov.hk", "")}`);
+  }
+  if (fragments.size) {
+    console.log(`\n  JS入面同data有關嘅路徑碎片(頭40個,用嚟砌真URL):`);
+    for (const f of [...fragments.keys()].slice(0, 40)) console.log(`    ${f}`);
+  }
+  const list = [...dataUrls].filter((u) => !TARGETS.some(([, known]) => known === u)).slice(0, 40);
+  console.log(`\n  由啲頁度挖到 ${dataUrls.size} 條data URL,其中 ${list.length} 條係我哋未試過嘅`);
+
+  // ③ 逐條開嚟睇有冇總部溫度
+  console.log("\n  逐條試(⭐= 入面有天文台總部字眼):");
+  const hits = [];
+  for (const u of list) {
+    const r = await getText(u, 10000);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${u.replace("https://", "")}`); continue; }
+    const hasHq = HQ_HINT.test(r.body);
+    // 搵時間戳:ISO、或者 YYYYMMDDHHMM、或者裸HHMM
+    const stamps = [...new Set([...r.body.matchAll(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\b\d{12}\b|"\d{4}"/g)].map((m) => m[0]))].slice(0, 3);
+    console.log(`    ${hasHq ? "⭐" : "  "} ${String(r.body.length).padStart(7)}B  ${stamps.join(" ") || "冇時間戳"}  ${u.replace("https://", "")}`);
+    if (hasHq) hits.push({ u, stamps, size: r.body.length });
+  }
+
+  await probeAwsGis();
+
+  console.log(`\n  ⭐有總部字眼嘅 ${hits.length} 條:`);
+  for (const h of hits) console.log(`     ${h.u}`);
+  if (!hits.length) console.log("     冇——即係個平台唔係用純data URL餵(可能係POST/WebSocket/內嵌),要換方法");
+  return hits;
+}
+
 async function main() {
   console.log("═".repeat(72));
   console.log("天文台公開數據掃描 — 有冇我哋未用而又有用嘅源?");
@@ -222,6 +396,8 @@ async function main() {
   console.log(`\n通到但我哋未用嘅: ${unused.length ? unused.map((r) => r.name).join("、") : "冇"}`);
   const dead = results.filter((r) => !r.ok);
   console.log(`唔存在/通唔到: ${dead.length ? dead.map((r) => `${r.name}(${r.note})`).join("、") : "冇"}`);
+
+  await discoverSources();
 }
 
 main().catch((e) => { console.error("❌", e.message); process.exit(1); });

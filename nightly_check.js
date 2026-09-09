@@ -271,15 +271,16 @@ async function getJson(path) {
 }
 
 async function checkWorker(problems, notes) {
-  const [temp, pm, st] = await Promise.all([
+  const [temp, pm, st, lv] = await Promise.all([
     getJson("/api/temperature"),
     getJson("/api/polymarket?city=hong-kong"),
     getJson("/api/pmstatus"),
+    getJson("/api/live"),
   ]);
 
-  // 三個都連唔到 = 成個站down,或者SITE_URL寫錯。唔好報三次同一件事。
-  if ([temp, pm, st].every((r) => r.status === null)) {
-    problems.push(`個dashboard三個endpoint都連唔到(${SITE_URL})——成個站down咗,或者SITE_URL secret未set/寫錯: ${temp.err}`);
+  // 全部都連唔到 = 成個站down,或者SITE_URL寫錯。唔好報幾次同一件事。
+  if ([temp, pm, st, lv].every((r) => r.status === null)) {
+    problems.push(`個dashboard所有endpoint都連唔到(${SITE_URL})——成個站down咗,或者SITE_URL secret未set/寫錯: ${temp.err}`);
     return;
   }
 
@@ -287,6 +288,10 @@ async function checkWorker(problems, notes) {
     ["/api/temperature", temp, (b) => (b.live || b.today ? null : "冇live又冇today")],
     ["/api/polymarket", pm, (b) => ("found" in b ? null : "冇found欄")],
     ["/api/pmstatus", st, (b) => (b.api?.gamma && b.api?.clob ? null : "冇api.gamma/api.clob")],
+    // ⚡快線:dashboard窗口內每2秒靠佢做「有冇新數」嘅探子。佢一死(或者
+    // 忘記咗喺cf-worker.js register)個page唔會報錯——pollChange個catch食晒,
+    // 只係靜靜哋跌返30秒poll,你就無啦啦慢返十幾秒。所以一定要有人睇住。
+    ["/api/live", lv, (b) => (b.live || b.web ? null : "冇live又冇web")],
   ];
   for (const [path, r, shapeErr] of shapes) {
     if (r.status === null) { problems.push(`${path} 連唔到: ${r.err}`); continue; }

@@ -2360,6 +2360,47 @@ function scheduleLivePoll() {
     scheduleLivePoll();
   }, livePollDelay());
 }
+
+// ⚡快線探子
+// ⚠️2026-09-09用戶:「人哋快我30秒左右」。逐層量咗:
+//   源      race過n=23,0.1°嘅數全世界都要等 stamp+8.4分,冇人快得過
+//   fan-out /api/temperature拉5條上游要等齊,實測白等259ms(最壞1195ms)
+//   poll    出數窗口10秒一次 → 平均遲5秒、最壞10秒
+// 即係我拎得返嘅係後面兩層,最壞11秒。呢個探子就係攞返嗰11秒。
+//
+// 做法:窗口內每2秒打一次 /api/live(只拉CSV+網站JSON,唔等METAR),
+// **淨係比較recordTime**。一變就即刻call pollLive()攞齊嘢render。
+// 咁render邏輯仍然得一份——唔會又整多份copy出嚟。
+//
+// 窗口係實測到貨時間收窄出嚟嘅:
+//   CSV   stamp+7.7–9.1分(n=23) → 每十分鐘嘅 :07.3–:09.6
+//   網站JSON 定時:02出,滯後1.0–1.3分 → 每個鐘嘅 :02.4–:04.2
+// 窗口外唔打(唔想無謂嘈天文台個站)。
+let lastFastKey = null;
+async function pollChange() {
+  try {
+    const res = await fetch('/api/live', { cache: 'no-store' });
+    if (!res.ok) return;
+    const j = await res.json();
+    const key = `${j.live?.recordTime ?? ''}|${j.web?.recordTime ?? ''}`;
+    if (lastFastKey === null) { lastFastKey = key; return; }  // 第一次只做基準
+    if (key !== lastFastKey) { lastFastKey = key; lastActivePoll = Date.now(); pollLive(); }
+  } catch { /* 探子死唔好嘈,scheduleLivePoll嗰條線照跑住做後備 */ }
+}
+function inArrivalWindow() {
+  const d = new Date(Date.now() + 8 * 3600e3);
+  const m = d.getUTCMinutes() + d.getUTCSeconds() / 60;
+  const mod = m % 10;
+  return (mod >= 7.3 && mod <= 9.6) || (m >= 2.4 && m <= 4.2);
+}
+function scheduleChangeWatch() {
+  const armed = inArrivalWindow();
+  setTimeout(() => {
+    if (!document.hidden && inArrivalWindow()) pollChange();
+    scheduleChangeWatch();
+  }, armed ? 2_000 : 10_000);
+}
+scheduleChangeWatch();
 scheduleLivePoll();
 setInterval(whenVisible(pollForecast), FORECAST_POLL_MS);
 setInterval(whenVisible(pollTomorrow), FORECAST_POLL_MS);

@@ -287,7 +287,8 @@ async function runCheck(env) {
   const todayMax = toNum(maxMinRow[2]);
   const todayMin = toNum(maxMinRow[3]);
 
-  const state = JSON.parse((await env.STATE.get("alert_state")) || "{}");
+  const stateRaw = (await env.STATE.get("alert_state")) || "{}";
+  const state = JSON.parse(stateRaw);
   const today = recordTime.slice(0, 10);
   if (state.date !== today) {
     Object.assign(state, { date: today, prevCurrent: null, prevMax: null, alertedFloors: [], approachAlerted: null, pulledBackAlerted: false, edgeAlerted: {}, fastAlerted: [] });
@@ -432,7 +433,17 @@ async function runCheck(env) {
 
   state.prevCurrent = current;
   state.prevMax = todayMax;
-  await env.STATE.put("alert_state", JSON.stringify(state));
+
+  // ⚠️2026-09-09:原本每次cron都無條件寫一次KV。想改做每分鐘跑
+  // (等Telegram推得夠快)嘅話,一日就1440次寫入——而Cloudflare免費KV
+  // 大約得1,000次寫入/日,即係會爆額,寫入開始失敗 → state存唔到 →
+  // 去重壞埋,同一個警報會不停重推。**唔會扣你錢,但個系統會壞。**
+  //
+  // 但其實絕大部分run係乜都冇變嘅(數據10分鐘先出一格,即係10次入面
+  // 有9次寫返一模一樣嘅嘢)。所以:變咗先寫。
+  // 咁每分鐘跑一日都只係約150–200次寫入,離1,000好遠。
+  const next = JSON.stringify(state);
+  if (next !== stateRaw) await env.STATE.put("alert_state", next);
 
   return { events: events.length, current, todayMax, todayMin };
 }

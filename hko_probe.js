@@ -270,6 +270,42 @@ async function probeAwsGis() {
   }
 }
 
+// ⚠️2026-09-09用戶堅持「人哋快我30秒」。我上次個race係20秒poll一次,
+// 即係30秒呢個數字**喺我解析度以下**,我根本量唔到,唔可以話佢冇。
+// 而race已經證實冇快源。所以30秒唔會嚟自「源」,只可能嚟自呢兩度:
+//   ① poll間隔——而家出數窗口10秒一次,平均遲5秒、最壞10秒先見到
+//   ② 我哋個worker一個request拉5條上游(CSV/maxmin/METAR/rhrread/網站JSON)
+//      Promise.allSettled要**全部**返晒先出回應。即係嗰個0.1°讀數
+//      要等埋美國個aviationweather.gov。呢條係白等,量咗先知幾貴。
+// 呢度就係量②:直接拉條CSV vs 經我哋個worker,差幾多。
+async function measureFanout() {
+  const SITE = (process.env.SITE_URL || "https://hk-weather-dashboard.ipchonin.workers.dev").replace(/\/$/, "");
+  console.log("\n" + "═".repeat(72));
+  console.log("⏱  一個request拉5條上游,貴幾多?");
+  console.log("═".repeat(72));
+  const time = async (url, opts) => {
+    const t0 = Date.now();
+    try { const r = await fetch(url, { ...opts, signal: AbortSignal.timeout(20000) }); await r.text(); return { ms: Date.now() - t0, ok: r.ok, status: r.status }; }
+    catch (e) { return { ms: Date.now() - t0, ok: false, status: e.name === "TimeoutError" ? "timeout" : e.message }; }
+  };
+  const rows = [];
+  for (let i = 0; i < 6; i++) {
+    const direct = await time(`${BASE_RW}/latest_1min_temperature.csv`, { cache: "no-store" });
+    const metar = await time("https://aviationweather.gov/api/data/metar?ids=VHHH&format=json", { cache: "no-store" });
+    const full = await time(`${SITE}/api/temperature`, { cache: "no-store" });
+    rows.push({ direct, metar, full });
+    console.log(`  第${i + 1}次  直接拉CSV ${String(direct.ms).padStart(5)}ms${direct.ok ? "" : "(" + direct.status + ")"}` +
+      `   METAR ${String(metar.ms).padStart(5)}ms${metar.ok ? "" : "(" + metar.status + ")"}` +
+      `   經我哋worker ${String(full.ms).padStart(5)}ms${full.ok ? "" : "(" + full.status + ")"}`);
+  }
+  const med = (xs) => { const s = xs.slice().sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const d = med(rows.map((r) => r.direct.ms)), m = med(rows.map((r) => r.metar.ms)), f = med(rows.map((r) => r.full.ms));
+  console.log(`\n  中位:直接 ${d}ms · METAR ${m}ms · 經worker ${f}ms`);
+  console.log(`  → 個fan-out成本 ≈ ${f - d}ms (${((f - d) / 1000).toFixed(1)}秒)`);
+  console.log(`  ⚠️呢個係Actions(美國機房)嘅數。你部手機喺香港,直接拉CSV會快好多,`);
+  console.log(`     但經worker嗰邊個fan-out成本係一樣要俾嘅——所以呢個差額先係重點。`);
+}
+
 async function discoverSources() {
   console.log("\n" + "═".repeat(72));
   console.log("🔎 自動搵源:天文台個網頁攞緊邊條data線?");
@@ -397,6 +433,7 @@ async function main() {
   const dead = results.filter((r) => !r.ok);
   console.log(`唔存在/通唔到: ${dead.length ? dead.map((r) => `${r.name}(${r.note})`).join("、") : "冇"}`);
 
+  await measureFanout();
   await discoverSources();
 }
 

@@ -34,7 +34,7 @@ function metarTimeIso(m) {
 
 // ⚠️所有上游fetch都要cache:"no-store"——Workers嘅fetch()預設經Cloudflare
 // edge cache,HKO嘅CSV試過俾佢食住舊版個零鐘,dashboard以為讀數唔更新
-async function fetchLive() {
+export async function fetchLive() {
   const res = await fetch(LIVE_CSV_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`latest_1min_temperature CSV 錯誤: ${res.status}`);
   const lines = (await res.text()).trim().split(/\r?\n/).slice(1);
@@ -126,7 +126,7 @@ async function fetchRhrread() {
 // (例如"1546"),Date.parse當咗做1546年。修好之後排序完全掉轉。
 //
 // 個站會揀客,要俾User-Agent同Referer。整數精度,同rhrread一樣。
-async function fetchHkoWeb() {
+export async function fetchHkoWeb() {
   const res = await fetch("https://www.hko.gov.hk/json/DYN_DAT_MINDS_RHRREAD.json", {
     cache: "no-store",
     headers: { "User-Agent": "Mozilla/5.0", Referer: "https://www.hko.gov.hk/" },

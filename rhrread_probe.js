@@ -61,6 +61,79 @@ async function poll() {
   }
 }
 
+// ============================================================
+// ⚠️2026-09-09加:AWS-GIS檔 vs 1分鐘CSV 對賽。
+//
+// 由來:用戶11:48撳「更新」,個數企喺11:30,但天文台自己個
+// 「分區天氣資訊平台」站頁同一刻已經係11:40。爬咗3輪先掘到個平台
+// 真正食緊邊條線——喺 irwip-map-config.js 入面:
+//   https://www.hko.gov.hk/wxinfo/awsgis/latestReadings_AWS1_v2.txt
+// 格式(12:04:50香港時間實測):
+//   Latest readings recorded at 11:50 Hong Kong Time 9 September 2026
+//   STN,WINDDIRECTION,WINDSPEED,GUST,TEMP,RH,MAXTEMP,MINTEMP,…
+//   HKO,,,,30.5,64,30.7,27.5,…      ← 總部,結算站
+//   HKA,90,15,24,32.0,54,32.3,27.4,… ← 赤鱲角
+//
+// ⚠️嗰次單次抽樣:AWS戳11:50、CSV嗰陣都係11:50 —— **打和,冇證明佢快**。
+// 用戶11:48見到嘅一步之差,好可能只係踩正到貨界線。
+// 所以呢度唔靠抽樣,靠「邊個先見到同一個戳」嚟分勝負。
+// ============================================================
+const AWS_URL = "https://www.hko.gov.hk/wxinfo/awsgis/latestReadings_AWS1_v2.txt";
+const CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_1min_temperature.csv";
+
+async function pollAws() {
+  try {
+    const res = await fetch(AWS_URL, { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!res.ok) return { err: `HTTP ${res.status}` };
+    const body = await res.text();
+    const m = body.match(/recorded at\s+(\d{1,2}):(\d{2})/i);
+    if (!m) return { err: "讀唔到個標題時間" };
+    const row = body.split(/\r?\n/).find((l) => /^HKO,/.test(l.trim()));
+    if (!row) return { err: "冇HKO嗰行" };
+    const c = row.split(",");
+    return {
+      stamp: `${m[1].padStart(2, "0")}:${m[2]}`,
+      temp: parseFloat(c[4]), max: parseFloat(c[6]), min: parseFloat(c[7]),
+    };
+  } catch (e) { return { err: e.message }; }
+}
+
+async function pollCsv() {
+  try {
+    const res = await fetch(CSV_URL, { cache: "no-store" });
+    if (!res.ok) return { err: `HTTP ${res.status}` };
+    const line = (await res.text()).split(/\r?\n/).find((l) => /香港天文台|Hong Kong Observatory/i.test(l));
+    if (!line) return { err: "冇總部嗰行" };
+    const [ts, , t] = line.split(",").map((s) => s.trim());
+    return { stamp: `${ts.slice(8, 10)}:${ts.slice(10, 12)}`, temp: parseFloat(t) };
+  } catch (e) { return { err: e.message }; }
+}
+
+// 邊個先見到同一個戳 = 邊個快。呢個先係公平比較,
+// 單次抽樣「而家幾舊」會被10分鐘一格嘅grid放大成假差距。
+function raceReport(firstSeen) {
+  console.log("\n" + "═".repeat(64));
+  console.log("🏁 AWS-GIS檔 vs 1分鐘CSV:邊個先攞到同一個戳");
+  console.log("═".repeat(64));
+  const stamps = [...new Set([...firstSeen.aws.keys(), ...firstSeen.csv.keys()])].sort();
+  const both = stamps.filter((s) => firstSeen.aws.has(s) && firstSeen.csv.has(s));
+  if (!both.length) { console.log("兩邊都見過嘅戳唔夠,跑耐啲(--minutes=45)"); return; }
+  console.log("戳     AWS先見到   CSV先見到   AWS快幾多");
+  const diffs = [];
+  for (const s of both) {
+    const a = firstSeen.aws.get(s), c = firstSeen.csv.get(s);
+    const d = (c - a) / 60000;
+    diffs.push(d);
+    console.log(`${s}  ${hhmmss(new Date(a))}   ${hhmmss(new Date(c))}   ${d >= 0 ? "+" : ""}${d.toFixed(1)}分`);
+  }
+  diffs.sort((x, y) => x - y);
+  const med = diffs[Math.floor(diffs.length / 2)];
+  console.log(`\nn=${diffs.length}  中位 ${med >= 0 ? "+" : ""}${med.toFixed(1)}分`);
+  console.log(med > 0.5 ? `→ AWS檔真係快 ${med.toFixed(1)} 分鐘,值得換過去`
+    : med < -0.5 ? `→ AWS檔反而慢,唔好換`
+    : `→ 兩邊打和(差${Math.abs(med).toFixed(1)}分),換咗都冇著數。用戶見到嗰步之差係grid放大出嚟嘅假象`);
+}
+
 function summarise(updates, errors, polls) {
   console.log(`\n${"═".repeat(64)}`);
   console.log("📊 快水喉 (rhrread) 更新規律");
@@ -132,9 +205,20 @@ async function main() {
   const updates = [];
   let polls = 0, errors = 0, lastRecordTime = null;
 
+  const firstSeen = { aws: new Map(), csv: new Map() };
+  const seeStamp = (src, stamp, extra) => {
+    if (!stamp || firstSeen[src].has(stamp)) return;
+    firstSeen[src].set(stamp, Date.now());
+    console.log(`${hhmmss(new Date())} 🏁 ${src.toUpperCase().padEnd(3)} 見到戳 ${stamp}  ${extra}`);
+  };
+
   while (Date.now() < until) {
-    const r = await poll();
+    const [r, aws, csv] = await Promise.all([poll(), pollAws(), pollCsv()]);
     polls++;
+    if (aws.err) console.log(`${hhmmss(new Date())} ⚠️ AWS: ${aws.err}`);
+    else seeStamp("aws", aws.stamp, `${aws.temp}° max${aws.max}`);
+    if (csv.err) console.log(`${hhmmss(new Date())} ⚠️ CSV: ${csv.err}`);
+    else seeStamp("csv", csv.stamp, `${csv.temp}°`);
     if (r.err) {
       errors++;
       console.log(`${hhmmss(r.at)} ⚠️ ${r.err}`);
@@ -155,6 +239,7 @@ async function main() {
 
   // 第一筆係基準唔係更新,唔計入cadence
   summarise(updates.slice(1).length ? updates : [], errors, polls);
+  raceReport(firstSeen);
   console.log(`\n完 香港時間 ${hhmmss(new Date())}`);
 }
 

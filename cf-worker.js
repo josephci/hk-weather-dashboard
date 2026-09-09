@@ -14,11 +14,13 @@
 import * as temperature from "./functions/api/temperature.js";
 import * as polymarket from "./functions/api/polymarket.js";
 import * as pmstatus from "./functions/api/pmstatus.js";
+import * as live from "./functions/api/live.js";
 
 const ROUTES = {
   "/api/temperature": temperature,
   "/api/polymarket": polymarket,
   "/api/pmstatus": pmstatus,
+  "/api/live": live,   // ⚡快線:只拉CSV+網站JSON,唔等METAR/rhrread
 };
 
 export default {

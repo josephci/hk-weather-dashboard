@@ -98,14 +98,27 @@ async function pollAws() {
   } catch (e) { return { err: e.message }; }
 }
 
+// ⚠️2026-09-09白行咗一次45分鐘race先發現:我自己另外寫咗個
+// /香港天文台|Hong Kong Observatory/ 去match,但個CSV實際寫嘅係
+// **"HK Observatory"** —— 128次poll全部「冇總部嗰行」,race出唔到結果。
+// production個STATION_PATTERN一早有齊三個寫法,我冇用返佢,自己重寫。
+// 呢個就係CLAUDE.md講嗰個「改一份漏一份」,今次輪到我中。
+// 而且呢個檔上面本身**一早有**個啱嘅STATION_PATTERN(rhrread嗰段用緊),
+// 我連佢都冇用,喺下面另外寫多個。所以而家直接用返上面嗰個,唔好再有第二份。
 async function pollCsv() {
   try {
     const res = await fetch(CSV_URL, { cache: "no-store" });
     if (!res.ok) return { err: `HTTP ${res.status}` };
-    const line = (await res.text()).split(/\r?\n/).find((l) => /香港天文台|Hong Kong Observatory/i.test(l));
-    if (!line) return { err: "冇總部嗰行" };
-    const [ts, , t] = line.split(",").map((s) => s.trim());
-    return { stamp: `${ts.slice(8, 10)}:${ts.slice(10, 12)}`, temp: parseFloat(t) };
+    const lines = (await res.text()).trim().split(/\r?\n/);
+    for (const line of lines.slice(1)) {
+      const [ts, place, t] = line.split(",").map((s) => s.trim());
+      if (STATION_PATTERN.test(place)) {
+        return { stamp: `${ts.slice(8, 10)}:${ts.slice(10, 12)}`, temp: parseFloat(t) };
+      }
+    }
+    // ⚠️分唔清「個站改咗名」同「個檔壞咗」就等於冇log——print返證據,
+    // 唔好again白行45分鐘先知。
+    return { err: `冇總部嗰行(共${lines.length}行,頭3個站名: ${lines.slice(1, 4).map((l) => l.split(",")[1]).join(" / ")})` };
   } catch (e) { return { err: e.message }; }
 }
 

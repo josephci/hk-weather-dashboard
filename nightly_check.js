@@ -383,6 +383,32 @@ function checkDuplicatedLogic(problems, notes) {
   } else {
     notes.push("σ校準口徑一致(全部用blend)");
   }
+
+  // ③ 天文台總部個站名:個CSV寫「HK Observatory」,唔係「Hong Kong Observatory」。
+  // 2026-09-09白行咗一次45分鐘race先發現——rhrread_probe自己另外寫咗個
+  // /香港天文台|Hong Kong Observatory/,128次poll全部match唔到,race出唔到結果。
+  // 凡係要由呢個CSV撈總部嗰行嘅檔,都一定要有齊三個寫法。
+  const stationFiles = ["functions/api/temperature.js", "netlify/functions/temperature.js",
+    "alert.js", "worker.js", "rhrread_probe.js", "hko_probe.js", "market_race.js"];
+  // ⚠️第一版寫「成份檔有冇HK Observatory呢串字」,結果俾我自己上面段
+  // comment(提咗個站名)冚住,反向測試捉唔到。所以要驗**個regex嗰行**,
+  // 唔係成份檔——comment講過個名唔等於個matcher識match。
+  const missHk = stationFiles.filter((f) => {
+    const c = read(f);
+    if (!c) return false;
+    // ⚠️再中一次:上面段comment引用咗**寫錯嗰個**regex做反面教材,
+    // 掃埋comment就會當佢係真matcher,rhrread_probe同hko_probe即刻false-positive。
+    // 呢個repo唔准出假警報,所以comment行要剝走先掃。
+    const patLines = c.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .filter((l) => /Observatory/.test(l) && /\/\^?\(?.*\|/.test(l));
+    return patLines.length > 0 && patLines.some((l) => !l.includes("HK Observatory"));
+  });
+  if (missHk.length) {
+    problems.push(`個站名寫漏咗「HK Observatory」(CSV實際用呢個,漏咗就成日match唔到、又唔會throw): ${missHk.join(", ")}`);
+  } else {
+    notes.push(`總部站名三個寫法齊 (${stationFiles.filter((f) => read(f)).length}份)`);
+  }
 }
 
 // ⚠️2026-09-08:CSV schema守門。

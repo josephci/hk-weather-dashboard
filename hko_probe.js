@@ -206,7 +206,7 @@ const CRAWL_SEEDS = [
   "https://maps.weather.gov.hk/",
 ];
 const ALLOW_HOST = /(^|\.)(hko\.gov\.hk|weather\.gov\.hk)$/i;
-const HQ_HINT = /香港天文台|Hong Kong Observatory|"HKO"|>HKO</i;
+const HQ_HINT = /香港天文台|HK Observatory|Hong Kong Observatory|"HKO"|>HKO</i;
 
 async function getText(url, ms = 12000) {
   try {
@@ -260,7 +260,7 @@ async function probeAwsGis() {
     console.log(`      頭5行:`);
     for (const l of lines.slice(0, 5)) console.log(`        ${l.slice(0, 120)}`);
     // 有冇總部?(呢個平台多數用站碼,所以連HKO/HKA呢啲碼一齊搵)
-    const hq = lines.filter((l) => /香港天文台|Hong Kong Observatory|\bHKO\b/i.test(l)).slice(0, 3);
+    const hq = lines.filter((l) => /香港天文台|HK Observatory|Hong Kong Observatory|\bHKO\b/i.test(l)).slice(0, 3);
     if (hq.length) {
       console.log(`      ⭐總部嗰行:`);
       for (const l of hq) console.log(`        ${l.slice(0, 160)}`);

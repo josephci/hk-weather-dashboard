@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-09-08T16:35:32.781Z",
-  "sampleDays": 89,
+  "generatedAt": "2026-09-09T13:36:39.991Z",
+  "sampleDays": 90,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
-    "gfs_seamless": 0.67,
-    "ecmwf_ifs025": 0.54,
-    "icon_seamless": 0.69,
-    "ukmo_seamless": -0.5,
-    "gem_seamless": 0.57,
-    "jma_seamless": 0.38
+    "gfs_seamless": 0.69,
+    "ecmwf_ifs025": 0.57,
+    "icon_seamless": 0.71,
+    "ukmo_seamless": -0.47,
+    "gem_seamless": 0.59,
+    "jma_seamless": 0.39
   },
-  "sigmaScale": 3.03,
-  "sigmaAbs": 1.53,
+  "sigmaScale": 3.04,
+  "sigmaAbs": 1.54,
   "sigmaWeight": 0,
   "min": {},
   "cities": {
@@ -44,32 +44,32 @@
       "sigmaWeight": 0.14
     },
     "london": {
-      "sampleDays": 52,
+      "sampleDays": 53,
       "max": {
-        "gfs_seamless": -0.43,
-        "ecmwf_ifs025": 0.29,
-        "icon_seamless": 0.27,
-        "ukmo_seamless": 0.16,
-        "gem_seamless": 0.22,
-        "jma_seamless": 1.37
+        "gfs_seamless": -0.42,
+        "ecmwf_ifs025": 0.3,
+        "icon_seamless": 0.26,
+        "ukmo_seamless": 0.15,
+        "gem_seamless": 0.23,
+        "jma_seamless": 1.36
       },
-      "sigmaScale": 1.34,
+      "sigmaScale": 1.33,
       "sigmaAbs": 0.85,
-      "sigmaWeight": 0.4
+      "sigmaWeight": 0.39
     },
     "paris": {
-      "sampleDays": 51,
+      "sampleDays": 52,
       "max": {
-        "gfs_seamless": -0.64,
-        "ecmwf_ifs025": 1.14,
-        "icon_seamless": 0.3,
-        "ukmo_seamless": 0.41,
-        "gem_seamless": 0.7,
-        "jma_seamless": 1.97
+        "gfs_seamless": -0.63,
+        "ecmwf_ifs025": 1.15,
+        "icon_seamless": 0.32,
+        "ukmo_seamless": 0.46,
+        "gem_seamless": 0.72,
+        "jma_seamless": 2
       },
-      "sigmaScale": 1.07,
-      "sigmaAbs": 0.79,
-      "sigmaWeight": 0.33
+      "sigmaScale": 1.09,
+      "sigmaAbs": 0.81,
+      "sigmaWeight": 0.32
     },
     "shenzhen": {
       "sampleDays": 36,

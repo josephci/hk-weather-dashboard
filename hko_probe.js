@@ -195,9 +195,14 @@ async function probe([name, url, kind]) {
 //
 // ⚠️純讀+print,唔會改檔。爬嘅範圍鎖死喺天文台自己嘅domain。
 // ============================================================
+// ⚠️2026-09-09第一輪爬嘅結果:由首頁爬到個平台真身係
+//   www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html?ele=Temperature
+// 但成8版頁淨係挖到1條data URL,而且冇總部 → 佢啲data URL係JS砌出嚟嘅,
+// 唔會以完整字串形式出現喺HTML。所以第二輪要落埋去啲JS檔度掘。
 const CRAWL_SEEDS = [
+  "https://www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html?ele=Temperature",
+  "https://www.hko.gov.hk/tc/wxinfo/awsgis/regional_portal.html",
   "https://www.hko.gov.hk/tc/index.html",
-  "https://www.hko.gov.hk/tc/wxinfo/ts/index.htm",
   "https://maps.weather.gov.hk/",
 ];
 const ALLOW_HOST = /(^|\.)(hko\.gov\.hk|weather\.gov\.hk)$/i;
@@ -249,12 +254,41 @@ async function discoverSources() {
   console.log(`\n  搵到 ${pageList.length} 個候選頁:`);
   for (const p of pageList) console.log(`    ${p.replace("https://", "")}`);
 
-  // ② 每頁挖晒data URL
+  // ② 每頁挖晒data URL,連埋佢load緊嘅JS一齊挖
+  //    (第一輪只挖HTML,得1條;個平台啲URL係喺JS入面砌嘅)
   const dataUrls = new Set();
+  const scripts = new Set();
+  const fragments = new Map(); // 路徑碎片 → 喺邊個JS見到
   for (const p of pageList) {
     const r = await getText(p);
     if (!r.ok) continue;
     for (const u of absUrls(r.body, p)) dataUrls.add(u);
+    for (const m of r.body.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) {
+      try {
+        const u = new URL(m[1], p);
+        if (ALLOW_HOST.test(u.hostname)) scripts.add(u.href);
+      } catch { /* skip */ }
+    }
+  }
+  const scriptList = [...scripts].slice(0, 20);
+  console.log(`\n  啲頁load緊 ${scriptList.length} 個自家JS,逐個掘:`);
+  for (const s of scriptList) {
+    const r = await getText(s);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${s.replace("https://", "")}`); continue; }
+    const before = dataUrls.size;
+    for (const u of absUrls(r.body, s)) dataUrls.add(u);
+    // JS入面多數係 "…/dat/" + ele + ".json" 咁砌,所以連碎片都要收
+    const frags = new Set();
+    for (const m of r.body.matchAll(/["'`]([\w./?=&-]*(?:aws|gis|\/dat\/|latest|minute|rwip|temp|obs)[\w./?=&-]*)["'`]/gi)) {
+      const f = m[1];
+      if (f.length > 3 && f.length < 90 && /[/.]/.test(f)) frags.add(f);
+    }
+    for (const f of frags) if (!fragments.has(f)) fragments.set(f, s);
+    console.log(`    ✓ ${String(r.body.length).padStart(7)}B  +${dataUrls.size - before}條URL  ${frags.size}個碎片  ${s.replace("https://www.hko.gov.hk", "")}`);
+  }
+  if (fragments.size) {
+    console.log(`\n  JS入面同data有關嘅路徑碎片(頭40個,用嚟砌真URL):`);
+    for (const f of [...fragments.keys()].slice(0, 40)) console.log(`    ${f}`);
   }
   const list = [...dataUrls].filter((u) => !TARGETS.some(([, known]) => known === u)).slice(0, 40);
   console.log(`\n  由啲頁度挖到 ${dataUrls.size} 條data URL,其中 ${list.length} 條係我哋未試過嘅`);

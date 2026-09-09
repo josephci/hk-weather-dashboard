@@ -221,13 +221,53 @@ async function getText(url, ms = 12000) {
 function absUrls(body, base) {
   const out = new Set();
   // 連相對路徑一齊收——個平台啲data URL多數係相對嘅
-  for (const m of body.matchAll(/["'(]([^"'()\s]+?\.(?:json|php|csv)(?:\?[^"'()\s]*)?)["')]/gi)) {
+  // ⚠️第二輪漏咗.txt,而個平台真正嗰兩個檔(latestReadings_AWS1_v2.txt、
+  // gislatest_portal.txt)正正就係.txt。差啲就因為個regex而miss咗。
+  for (const m of body.matchAll(/["'(]([^"'()\s]+?\.(?:json|php|csv|txt)(?:\?[^"'()\s]*)?)["')]/gi)) {
     try {
       const u = new URL(m[1], base);
       if (ALLOW_HOST.test(u.hostname)) out.add(u.href);
     } catch { /* 唔係URL就算 */ }
   }
   return [...out];
+}
+
+// ⚠️2026-09-09第二輪掘到嘅金:個平台個 irwip-map-config.js 入面有
+//   /wxinfo/aws/
+//   ../../../wxinfo/awsgis/        ← 由 /tc/wxinfo/awsgis/files/ 解返出嚟 = /wxinfo/awsgis/
+//   latestReadings_AWS1_v2.txt
+//   gislatest_portal.txt
+// 呢兩個.txt十有八九就係「分區天氣資訊平台」啲即時讀數。
+// 用戶11:48見到佢個站頁有11:40嘅30.2°,而我哋條CSV仲係11:30——
+// 就係要驗呢兩個檔係咪真係早過開放數據CSV。
+// 直接開嚟睇格式同時間戳,唔好再靠爬。
+async function probeAwsGis() {
+  console.log("\n  🎯 直接開個平台自己嗰兩個檔:");
+  const cands = [
+    "https://www.hko.gov.hk/wxinfo/awsgis/latestReadings_AWS1_v2.txt",
+    "https://www.hko.gov.hk/wxinfo/awsgis/gislatest_portal.txt",
+    "https://www.hko.gov.hk/tc/wxinfo/awsgis/latestReadings_AWS1_v2.txt",
+    "https://www.hko.gov.hk/tc/wxinfo/awsgis/gislatest_portal.txt",
+    "https://www.hko.gov.hk/wxinfo/aws/latestReadings_AWS1_v2.txt",
+  ];
+  for (const u of cands) {
+    const r = await getText(u, 10000);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${u.replace("https://www.hko.gov.hk", "")}`); continue; }
+    const body = r.body;
+    console.log(`    ✓ ${body.length}B  ${u.replace("https://www.hko.gov.hk", "")}`);
+    // 頭幾行睇格式
+    const lines = body.split(/\r?\n/).filter((l) => l.trim());
+    console.log(`      頭5行:`);
+    for (const l of lines.slice(0, 5)) console.log(`        ${l.slice(0, 120)}`);
+    // 有冇總部?(呢個平台多數用站碼,所以連HKO/HKA呢啲碼一齊搵)
+    const hq = lines.filter((l) => /香港天文台|Hong Kong Observatory|\bHKO\b/i.test(l)).slice(0, 3);
+    if (hq.length) {
+      console.log(`      ⭐總部嗰行:`);
+      for (const l of hq) console.log(`        ${l.slice(0, 160)}`);
+    } else {
+      console.log(`      ⚠️搵唔到總部字眼——可能用緊站碼,總行數 ${lines.length}`);
+    }
+  }
 }
 
 async function discoverSources() {
@@ -305,6 +345,8 @@ async function discoverSources() {
     console.log(`    ${hasHq ? "⭐" : "  "} ${String(r.body.length).padStart(7)}B  ${stamps.join(" ") || "冇時間戳"}  ${u.replace("https://", "")}`);
     if (hasHq) hits.push({ u, stamps, size: r.body.length });
   }
+
+  await probeAwsGis();
 
   console.log(`\n  ⭐有總部字眼嘅 ${hits.length} 條:`);
   for (const h of hits) console.log(`     ${h.u}`);

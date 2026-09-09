@@ -725,8 +725,27 @@ async function pollLive() {
       const liveAgeMin = Math.round((Date.now() - new Date(json.live.recordTime).getTime()) / 60000);
       const srcNote = json.live.source === 'rhrread' ? ' · rhrread後備(整數)' : '';
       const staleNote = liveAgeMin > 30 ? ' ⚠️HKO源頭滯後' : '';
+      // ⚠️2026-09-09用戶11:48撳「更新」,個數仍然係11:30,問點解撳都唔更新。
+      // 查完:唔係bug。天文台個1分鐘CSV(個名呃人)係10分鐘一格,
+      // 戳:00/:10/:20…,每格喺個戳之後7.5–9.1分先出街(n=18實測)。
+      // 即係11:40嗰格最快11:47.5、最遲11:49.1先有。佢11:48撳,真係未出。
+      //
+      // 呢個結構搞到一個好誤導嘅效果:因為數據係10分鐘一跳,
+      // 到貨時間爭半分鐘,睇落就變成成格10分鐘咁大差別。
+      // 11:48撳 → 18分鐘前;11:49撳 → 9分鐘前。條線冇變過,只係過咗界。
+      //
+      // 所以唔可以淨係寫「18分鐘前」——要話埋佢「下一格幾時到」,
+      // 佢先知而家撳係徒勞定係值得等多一分鐘。呢個先係佢真正想知嗰樣。
+      let nextNote = '';
+      if (json.live.source !== 'rhrread') {
+        const stamp = new Date(json.live.recordTime).getTime();
+        const minsToNext = (stamp + 10 * 60_000 + 8.6 * 60_000 - Date.now()) / 60_000;
+        nextNote = minsToNext > 0.5 ? ` · 下一格約${Math.round(minsToNext)}分鐘後到`
+                 : minsToNext > -3   ? ' · 下一格隨時到'
+                 : '';  // 遲過3分鐘就唔好再report倒數,嗰陣係上游真係遲咗
+      }
       const rtEl = document.getElementById('recordTime');
-      rtEl.textContent = formatRelativeTime(json.live.recordTime) + srcNote + staleNote;
+      rtEl.textContent = formatRelativeTime(json.live.recordTime) + srcNote + nextNote + staleNote;
       rtEl.style.color = liveAgeMin > 30 ? 'var(--warm)' : '';
       lastRecordTime = json.live.recordTime;
       currentRealized = Number(value); // 俾軌跡上限用

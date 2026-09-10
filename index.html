@@ -789,16 +789,29 @@ async function pollLive() {
     // 「幾點嗰個數」一定要同個值一齊睇:個整數幾多度,冇講係幾點,係冇用嘅。
     const fastEl = document.getElementById('fastTemp');
     const fastTimeEl = document.getElementById('fastTime');
-    // ⚠️2026-09-08:改用天文台網站自己個JSON做第一快源。
-    // 實測(market_race真log,每個新讀數第一次出現嘅滯後):
-    //   網站JSON 1.2分  <  rhrread 3.8分  <  1分鐘CSV 8.6分
-    // 而且網站會非整點出bulletin(見過14:21、15:46),rhrread淨係正整點。
-    // 溫度中途升穿關口,網站即刻反映,rhrread要等下一個鐘——
-    // 呢個就係「市場:05-:07就知邊格死咗,但天文台:18先出數」嘅答案。
-    // 網站攞唔到就跌返rhrread,兩條都冇先顯示「--」。
-    const fastSrc = (json.web && typeof json.web.value === 'number') ? json.web
-                  : (json.fast && typeof json.fast.value === 'number') ? json.fast : null;
-    const fastLabel = json.web && typeof json.web.value === 'number' ? '網站' : 'rhrread';
+    // ⚠️2026-09-10:換返rhrread做⚡嘅主源(9月8日換咗去網站JSON,而家轉返)。
+    //
+    // 唔係因為網站JSON慢——佢實測1.2分,rhrread 3.6分,網站真係快2.4分,
+    // 而且仲會非整點加插。換返轉頭係**輸咗速度**嘅。
+    //
+    // 但係:網站JSON個 BulletinTime 係「份公報幾點發」,**唔係「個溫度幾點量」**。
+    // 用戶2026-09-10影低:⚡31°(14:02) vs 即時讀數31.6°(14:00)。
+    // round(31.6)=32。兩個可能都未排除:(a)佢截去小數 (b)佢個讀數舊十幾分鐘。
+    // 分唔到,係因為佢**根本冇話你知個觀測時刻**。
+    //
+    // rhrread個 recordTime 係實實在在嘅觀測時間(2026-09-09T13:00:00+08:00)。
+    // ⚡呢一行嘅用途就係「幾點嗰陣個整數係幾多」——一個唔知幾點嘅數,
+    // 快極都用唔到落注。所以寧願慢2.4分,都要知個時刻。
+    //
+    // ⚠️兩條源嘅捨入規則其實**都未驗實**:同一把尺量返,
+    // 有分辨力嘅樣本 網站3個(2對2)、rhrread 2個(2個都啱)。兩個都未夠8個。
+    // rounding_probe.js已經改好,等溫度郁得快嗰段跑夠數先落結論。
+    // 驗實之前,下面會照標「兩邊對唔上」,唔會扮冇事。
+    const fastSrc = (json.fast && typeof json.fast.value === 'number') ? json.fast
+                  : (json.web && typeof json.web.value === 'number') ? json.web : null;
+    // ⚠️個label一定要講返用緊邊條——換源嗰陣呢行冇跟住改,
+    // 就會出現「寫住網站但其實係rhrread」呢種靜靜哋呃人。
+    const fastLabel = fastSrc === json.fast ? 'rhrread' : '網站';
     if (fastSrc) {
       fastEl.textContent = fastSrc.value + '°';
       const rt = fastSrc.recordTime;
@@ -861,11 +874,17 @@ async function pollLive() {
       // (b)嘅話,「⚡快CSV 7分鐘」呢個講法本身就唔成立。
       //
       // 未驗實之前,唔可以扮冇事。兩邊對唔上就直接標出嚟,由你判斷。
+      //
+      // ⚠️2026-09-10換返rhrread做主源之後,呢個比較要加時間閘。
+      // rhrread係正整點(:00),CSV係10分鐘一格。14:40嗰陣rhrread仲係14:00嘅數,
+      // CSV已經係14:30——差半個鐘,溫度郁咗好正常,夾硬比就會**一路報假警報**。
+      // 呢個repo唔准出假警報(出一次就冇人再信)。所以兩個時刻差超過5分鐘就唔比。
       let mismatch = '';
-      if (json.live && typeof json.live.value === 'number' && json.live.source !== 'rhrread') {
+      if (json.live && typeof json.live.value === 'number' && json.live.source !== 'rhrread' && rt) {
+        const gapMin = Math.abs(new Date(json.live.recordTime).getTime() - new Date(rt).getTime()) / 60_000;
         const csvRounded = Math.round(json.live.value);
-        if (csvRounded !== fastSrc.value) {
-          mismatch = ` · ⚠️即時讀數${json.live.value.toFixed(1)}°→${csvRounded},同⚡對唔上`;
+        if (gapMin <= 5 && csvRounded !== fastSrc.value) {
+          mismatch = ` · ⚠️同一時刻嘅即時讀數${json.live.value.toFixed(1)}°→${csvRounded},對唔上`;
         }
       }
       fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}`;

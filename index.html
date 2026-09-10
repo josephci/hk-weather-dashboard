@@ -848,7 +848,28 @@ async function pollLive() {
         // 中間冇嘢等,而中途嗰份先係edge(市場未反應)。
         tail = ` · 下一份定時${nowMin < 2 ? 2 - nowMin : 62 - nowMin}分後(可能提早)`;
       }
-      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}`;
+      // ⚠️2026-09-10用戶影低:⚡寫住31°,但即時讀數31.6°、今日至今31.9°、
+      // METAR 32.0°。佢問「陰我?又話快水喉四捨五入」——問得啱。
+      //
+      // 個「四捨五入」結論係喺**rhrread**度驗嘅(200樣本)。2026-09-08我換咗
+      // ⚡去用天文台網站JSON,直接沿用咗嗰個結論,**從來冇驗過新嗰條源**。
+      // 攞market_race真log重驗:6個bulletin入面,溫度郁緊嗰次(14:21)對唔上,
+      // 其餘5次對得上——但嗰5次全部係溫度平嗰陣,遲10分鐘round出嚟都係
+      // 同一個整數,個測試根本分唔到。**即係我從來冇真正驗過。**
+      //
+      // 兩個可能都未排除:(a)佢係截去小數 (b)佢個讀數其實比BulletinTime舊十幾分鐘。
+      // (b)嘅話,「⚡快CSV 7分鐘」呢個講法本身就唔成立。
+      //
+      // 未驗實之前,唔可以扮冇事。兩邊對唔上就直接標出嚟,由你判斷。
+      let mismatch = '';
+      if (json.live && typeof json.live.value === 'number' && json.live.source !== 'rhrread') {
+        const csvRounded = Math.round(json.live.value);
+        if (csvRounded !== fastSrc.value) {
+          mismatch = ` · ⚠️即時讀數${json.live.value.toFixed(1)}°→${csvRounded},同⚡對唔上`;
+        }
+      }
+      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}`;
+      fastTimeEl.style.color = mismatch ? 'var(--warm)' : '';
     } else {
       fastEl.textContent = '--°';
       fastTimeEl.textContent = json.webError ? `⚠️ ${json.webError}` : '⚠️ 攞唔到';

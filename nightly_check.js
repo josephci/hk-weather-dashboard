@@ -389,6 +389,28 @@ function checkDuplicatedLogic(problems, notes) {
     notes.push("σ校準口徑一致(全部用blend)");
   }
 
+  // ④ 「唔知」唔可以當「0」。
+  // 2026-09-10用戶影低:1小時預測panel喺趨勢同模型都未load嗰陣,
+  // 照樣寫住「預測29.2° 趨勢+0.0°/hr 距今日max 0.0° → 破max機率:低」。
+  // 個29.2°就係當時嘅現時溫度——攞住現時溫度冠上「預測」兩個字。
+  // 元兇係 `let slope = 0`:把「未夠採樣點」寫成「趨勢係平」,
+  // 再由「平」推出「機率低」。撳一下更新就跳去29.0°,用戶問點解會跳。
+  // 呢個係最貴嗰種bug——唔會throw、睇落正常、而且直接影響落注。
+  // ⚠️又中同一個伏(第③項嗰陣已經中過一次):我上面段comment引用咗
+  // `let slope = 0` 做反面教材,掃成份檔就當咗係真code。剝走comment先掃。
+  const idxRaw = read("index.html") || "";
+  const idx = idxRaw.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  if (/let\s+slope\s*=\s*0\b/.test(idx)) {
+    problems.push("index.html個1小時預測又用返 `let slope = 0`——趨勢唔知就當平,會出「距max 0.0°但機率低」呢種自相矛盾嘅結論");
+  }
+  // 靜默catch = 呢個repo所有靜靜哋壞嘅source。Open-Meteo嗰個中過招。
+  const silent = (idx.match(/catch\s*(\([^)]*\))?\s*\{\s*(\/\*\s*靜默\s*\*\/)?\s*\}/g) || []).length;
+  if (silent > 0) {
+    problems.push(`index.html有${silent}個乜都唔做嘅catch——上游死咗會靜靜哋當「未load完」,分唔到死因`);
+  } else {
+    notes.push("index.html冇靜默catch");
+  }
+
   // ③ 天文台總部個站名:個CSV寫「HK Observatory」,唔係「Hong Kong Observatory」。
   // 2026-09-09白行咗一次45分鐘race先發現——rhrread_probe自己另外寫咗個
   // /香港天文台|Hong Kong Observatory/,128次poll全部match唔到,race出唔到結果。

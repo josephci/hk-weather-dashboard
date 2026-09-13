@@ -160,6 +160,22 @@
   .refresh-btn:active { transform: scale(0.94); background: rgba(200,155,60,0.24); }
   .refresh-btn[disabled] { opacity: 0.55; }
 
+  /* 逐條源:唔揀、唔溝,一行一條,自己個值自己個觀測時刻 */
+  .src-table {
+    width: 100%;
+    margin-top: 12px;
+    border-collapse: collapse;
+    font-size: 12px;
+    color: var(--muted);
+    position: relative; z-index: 1;   /* .live-panel::before係absolute裝飾層 */
+  }
+  .src-table td { padding: 3px 0; vertical-align: baseline; white-space: nowrap; }
+  .src-table td.v { font-family: var(--mono); color: var(--text); text-align: right; padding-right: 10px; }
+  .src-table td.t { font-family: var(--mono); font-size: 11px; }
+  .src-table td.n { width: 100%; font-size: 11px; text-align: right; }
+  .src-table tr.used td.v { color: var(--brass); font-weight: 700; }
+  .src-table tr.dead td { color: #7a5c5c; }
+
   /* ⚡行嘅字最長(源+時間+下一份),iPhone窄screen會斷開「快水喉(整
      數)」咁樣。準個時間欄自己換行,但個label永遠唔准拆。 */
   .fast-line { flex-wrap: wrap; gap: 2px 8px; }
@@ -429,6 +445,11 @@
       <span>✈️ 赤鱲角METAR：<span id="metarTemp" style="font-family:var(--mono);">--°</span></span>
       <span id="metarTime" style="font-size:12px;"></span>
     </div>
+    <!-- ⚠️2026-09-13用戶要求:「分返開個溫度顯示根據唔同的source同時間點,
+         等我自己判斷而唔洗被佢污染左」。上面個大字係pickLive()揀出嚟嘅,
+         佢會靜靜哋喺CSV同rhrread之間轉,轉咗你只見到個數變。
+         呢度原封不動咁列返每一條:自己個值、自己個觀測時刻,唔揀、唔溝、唔補。 -->
+    <table id="srcTable" class="src-table"><tbody></tbody></table>
     <div class="station-line fast-line" style="margin-top:6px;">
       <span id="fastRow" style="cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,.3);">⚡ 快水喉(整數)：<span id="fastTemp" style="font-family:var(--mono);color:var(--brass);font-weight:700;">--°</span> <span id="fastNew"></span></span>
       <span id="fastTime" style="font-size:12px;"></span>
@@ -780,6 +801,8 @@ async function pollLive() {
       lastMetars = json.metars;
       if (currentCity !== 'hk') renderCnLive();
     }
+
+    renderSourceTable(json);   // 逐條源,唔揀唔溝
     if (json.rain) rainNow = json.rain;
 
     // ⚡ 快水喉:整數溫度 + 佢係邊個時間嘅數。
@@ -2440,6 +2463,54 @@ function scheduleLivePoll() {
     if (!document.hidden) { lastActivePoll = Date.now(); pollLive(); }
     scheduleLivePoll();
   }, livePollDelay());
+}
+
+// ⚠️2026-09-13用戶:「我想分返開個溫度顯示根據唔同的source同時間點,
+// 等我自己判斷而唔洗被佢污染左」。
+//
+// 點解佢講得啱:上面個大字係 pickLive() 揀出嚟嘅。CSV滯後>20分鐘就
+// 靜靜哋轉去rhrread(0.1°變整數),你只會見到個數變咗,唔知係換咗源。
+// 而⚡嗰行又喺rhrread同網站JSON之間揀。即係塊板上兩個「溫度」,
+// 背後可能係四條唔同嘅源、四個唔同嘅觀測時刻。
+//
+// 呢個表唔揀、唔溝、唔補:一行一條,列自己個值同自己個觀測時刻。
+// 用緊嗰條標金色,死咗嗰條照列出嚟講死因(唔好靜靜哋唔見咗)。
+//
+// ⚠️網站JSON嗰行寫「公報」唔寫「觀測」——BulletinTime係份公報幾點發,
+// 唔係個溫度幾點量。呢個分別就係09-10嗰次(⚡31° vs CSV 31.6°)未解到嘅位。
+function renderSourceTable(json) {
+  const tb = document.querySelector('#srcTable tbody');
+  if (!tb) return;
+  const used = json.live?.source ?? null;
+  const age = (t) => t ? formatRelativeTime(t) : '';
+  const rows = [];
+  const add = (name, val, unit, time, timeLabel, opts = {}) =>
+    rows.push({ name, val, unit, time, timeLabel, ...opts });
+
+  if (json.csv && json.csv.value !== null) add('1分鐘CSV', json.csv.value.toFixed(1), '°', json.csv.recordTime, '觀測', { isUsed: used === 'csv' });
+  else add('1分鐘CSV', '—', '', null, '', { dead: json.liveError || '總部報N/A' });
+
+  if (json.fast && typeof json.fast.value === 'number') add('rhrread', json.fast.value, '°', json.fast.recordTime, '觀測', { isUsed: used === 'rhrread' });
+  else add('rhrread', '—', '', null, '', { dead: '攞唔到' });
+
+  if (json.web && typeof json.web.value === 'number') add('網站JSON', json.web.value, '°', json.web.recordTime, '公報');
+  else add('網站JSON', '—', '', null, '', { dead: json.webError || '攞唔到' });
+
+  const vhhh = json.metars?.VHHH;
+  if (vhhh && typeof vhhh.tempC === 'number') add('赤鱲角METAR', vhhh.tempC.toFixed(1), '°', vhhh.obsTime, '觀測');
+  else add('赤鱲角METAR', '—', '', null, '', { dead: json.metarError || '攞唔到' });
+
+  if (json.today) add('今日max/min', `${json.today.max?.toFixed(1) ?? '?'} / ${json.today.min?.toFixed(1) ?? '?'}`, '°', json.todayRecordTime, '截至');
+  else add('今日max/min', '—', '', null, '', { dead: json.todayError || '攞唔到' });
+
+  tb.innerHTML = rows.map((r) => {
+    const cls = r.dead ? 'dead' : r.isUsed ? 'used' : '';
+    const timeCell = r.dead ? `⚠️ ${r.dead}`
+      : `${r.timeLabel}${hkClock(r.time) || '?'}`;
+    const ageCell = r.dead ? '' : age(r.time);
+    return `<tr class="${cls}"><td>${r.name}${r.isUsed ? ' ←大字用緊' : ''}</td>` +
+      `<td class="v">${r.val}${r.unit}</td><td class="t">${timeCell}</td><td class="n">${ageCell}</td></tr>`;
+  }).join('');
 }
 
 // ⚡快線探子

@@ -206,6 +206,13 @@ export async function onRequest(context) {
   const response = {};
   const csvLive = liveResult.status === "fulfilled" ? liveResult.value : null;
   const rrTemp = rhrreadResult.status === "fulfilled" ? rhrreadResult.value?.temp : null;
+  // ⚠️2026-09-13用戶要求:「我想分返開個溫度顯示根據唔同的source同時間點,
+  // 等我自己判斷而唔洗被佢污染左」。合理——pickLive()會靜靜哋喺CSV同rhrread
+  // 之間揀,揀完個大字就變咗「某條源喺某個時刻」但唔講明係邊條邊個時刻。
+  // 所以除咗picked嗰個,原封不動咁俾返每一條:csv / fast(rhrread) / web / metars。
+  // 呢度加返未經揀選嘅CSV——之前佢淨係喺pickLive入面出現,揀輸咗就冇人見到。
+  if (csvLive) response.csv = { ...csvLive, source: "csv" };
+
   const live = pickLive(csvLive, rrTemp);
   if (live && live.value !== null) {
     response.live = live;

@@ -363,6 +363,21 @@ async function checkWorker(problems, notes) {
     } else if (temp.body.webError) {
       notes.push(`快水喉今次攞唔到,跌返rhrread: ${temp.body.webError}`);
     }
+
+    // ⚠️2026-09-13加:today.max 就係結算嗰個數,而家有第二條獨立源
+    // (region.json,喺www.hko.gov.hk;maxmin CSV喺data.weather.gov.hk)。
+    // 兩條唔同host、唔同發佈路徑,理論上要一模一樣。唔夾 = 其中一邊出事,
+    // 而你唔會喺dashboard上面自己發現——所以要每晚對一次。
+    const rg = temp.body.region, td = temp.body.today;
+    if (rg && typeof rg.max === "number" && td && typeof td.max === "number") {
+      if (Math.abs(rg.max - td.max) > 0.05) {
+        problems.push(`今日max兩條源唔夾:maxmin CSV=${td.max}° vs region.json=${rg.max}°(差${(rg.max - td.max).toFixed(1)}°)——結算就係呢個數,查邊邊出事`);
+      } else {
+        notes.push(`今日max兩條源對得上 (${td.max}°)`);
+      }
+    } else if (temp.body.regionError) {
+      notes.push(`region.json攞唔到(冇咗today.max嘅交叉對照): ${temp.body.regionError}`);
+    }
   }
 }
 

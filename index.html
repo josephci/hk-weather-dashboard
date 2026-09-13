@@ -169,10 +169,16 @@
     color: var(--muted);
     position: relative; z-index: 1;   /* .live-panel::before係absolute裝飾層 */
   }
-  .src-table td { padding: 3px 0; vertical-align: baseline; white-space: nowrap; }
-  .src-table td.v { font-family: var(--mono); color: var(--text); text-align: right; padding-right: 10px; }
-  .src-table td.t { font-family: var(--mono); font-size: 11px; }
-  .src-table td.n { width: 100%; font-size: 11px; text-align: right; }
+  /* ⚠️2026-09-13用戶影低:個「幾分鐘前」欄俾切走咗(得返「18…」)。
+     成個表闊過個panel,而.live-panel係overflow:hidden,所以硬生生切咗。
+     元兇:所有td都nowrap + td.n寫死width:100%。
+     改法:唔好再nowrap(除咗個數值),td.n唔要width:100%,
+     個警告獨立一行(唔好塞入時間欄搞到成行爆晒)。 */
+  .src-table td { padding: 3px 6px 3px 0; vertical-align: baseline; }
+  .src-table td.v { font-family: var(--mono); color: var(--text); text-align: right; white-space: nowrap; }
+  .src-table td.t { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .src-table td.n { font-size: 11px; text-align: right; white-space: nowrap; padding-right: 0; }
+  .src-table td.warn { color: var(--warm); font-size: 11px; padding: 0 0 4px 0; }
   .src-table tr.used td.v { color: var(--brass); font-weight: 700; }
   .src-table tr.dead td { color: #7a5c5c; }
 
@@ -441,7 +447,13 @@
     <div class="station-line" style="margin-top:6px;">
       <span>今日至今：<span id="todayMax" style="color:var(--warm);font-family:var(--mono);">--°</span> / <span id="todayMin" style="color:var(--cool);font-family:var(--mono);">--°</span></span>
     </div>
-    <div class="station-line" style="margin-top:6px;">
+    <!-- ⚠️2026-09-13:METAR呢行拆走咗——加咗逐條源個表之後,佢完全重複
+         (表入面「赤鱲角METAR 31.0° 觀測14:00」同呢行一模一樣)。
+         iPhone度垂直空間好貴,重複兩次即係逼你碌多下。
+         「今日至今」就留住:嗰個係結算嗰個數,值得霸個顯眼位。
+         啲element照留(display:none),因為pollLive同renderCnLive仲寫緊佢哋,
+         拆走個DOM就會靜靜哋throw——呢個repo已經中過呢類伏。 -->
+    <div class="station-line" style="display:none;">
       <span>✈️ 赤鱲角METAR：<span id="metarTemp" style="font-family:var(--mono);">--°</span></span>
       <span id="metarTime" style="font-size:12px;"></span>
     </div>
@@ -2337,6 +2349,31 @@ function pollHourNowcast() {
     else if (gapToMax <= 0.5 && slope === null) verdict = `預測${proj.toFixed(1)}°貼住今日max(差${gapToMax.toFixed(1)}°),但趨勢未知 → 講唔到機率`;
     else verdict = `預測${proj.toFixed(1)}°,距今日max ${gapToMax.toFixed(1)}° → 破max機率:低`;
   }
+
+  // ⚠️2026-09-13用戶14:27影低:即時31.4°、趨勢+0.3°/hr、0.0mm雨,
+  // 個panel竟然寫「預測29.9° · 距今日max 1.8° → 破max機率:低」。
+  //
+  // 29.9 比**現時讀數**仲低1.5°。乾燥、下晝、升緊——冇任何理由跌1.5°。
+  // 拆返個數:proj=(趨勢外推31.58 + 模型28.2)/2。即係Open-Meteo話
+  // 下個鐘28.2°,同現實爭3.2°,而個blend照樣一半一半溝埋。
+  // 然後個1.8°gap(全部由呢個離譜模型數整出嚟)再變成「機率:低」。
+  //
+  // 呢個係最貴嗰種假信心:一個自相矛盾嘅預測,包裝成一個叫你唔使驚嘅結論。
+  // 兩條規矩:
+  //   ① 兩個輸入拆到咁遠(>1.5°),就唔好夾埋當一個數——講明佢哋唔夾
+  //   ② 冇雨 + 趨勢唔跌,但個預測低過現時讀數 → 個預測本身唔可信,
+  //      唔准出「機率:低」呢類叫人放心嘅結論
+  const bothInputs = trendProj !== null && modelNext !== null;
+  const spread = bothInputs ? Math.abs(trendProj - modelNext) : 0;
+  const incoherent = !raining && slope !== null && slope >= -0.1 && proj < currentRealized - 0.3;
+  if (incoherent) {
+    verdict = `⚠️預測${proj.toFixed(1)}°低過現時讀數${currentRealized.toFixed(1)}°,但唔落雨兼趨勢${slope >= 0 ? "+" : ""}${slope.toFixed(1)}°/hr` +
+      `${bothInputs ? `(趨勢外推${trendProj.toFixed(1)}° vs 模型${modelNext.toFixed(1)}°,爭${spread.toFixed(1)}°)` : ""}` +
+      ` → 個預測自己都唔一致,唔好用佢判斷破唔破max`;
+  } else if (spread > 1.5) {
+    verdict = `⚠️趨勢外推${trendProj.toFixed(1)}° vs 模型${modelNext.toFixed(1)}°,爭${spread.toFixed(1)}°——` +
+      `夾埋個${proj.toFixed(1)}°兩邊都唔似,唔好當佢係預測。原結論:${verdict}`;
+  }
   // 講清楚個預測係邊兩樣夾出嚟,少咗邊樣。之前只寫「趨勢數據不足」,
   // 但模型都未load嗰陣一樣係寫呢句,分唔到係少咗趨勢定少咗模型。
   const src = slope === null ? '（純模型,趨勢未夠3點）'
@@ -2482,7 +2519,8 @@ function renderSourceTable(json) {
   const tb = document.querySelector('#srcTable tbody');
   if (!tb) return;
   const used = json.live?.source ?? null;
-  const age = (t) => t ? formatRelativeTime(t) : '';
+  // 表入面用短寫(「18分前」),長寫會令個表闊過個panel
+  const age = (t) => t ? formatRelativeTime(t).replace('分鐘前', '分前') : '';
   const rows = [];
   const add = (name, val, unit, time, timeLabel, opts = {}) =>
     rows.push({ name, val, unit, time, timeLabel, ...opts });
@@ -2525,10 +2563,12 @@ function renderSourceTable(json) {
   tb.innerHTML = rows.map((r) => {
     const cls = r.dead ? 'dead' : r.isUsed ? 'used' : '';
     const timeCell = r.dead ? `⚠️ ${r.dead}`
-      : `${r.timeLabel}${hkClock(r.time) || '?'}${r.stale ? '(數據較舊)' : ''}${r.warn || ''}`;
+      : `${r.timeLabel}${hkClock(r.time) || '?'}${r.stale ? '(舊)' : ''}`;
     const ageCell = r.dead ? '' : age(r.time);
-    return `<tr class="${cls}"><td>${r.name}${r.isUsed ? ' ←大字用緊' : ''}</td>` +
+    const main = `<tr class="${cls}"><td>${r.name}${r.isUsed ? ' ←大字' : ''}</td>` +
       `<td class="v">${r.val}${r.unit}</td><td class="t">${timeCell}</td><td class="n">${ageCell}</td></tr>`;
+    // 個警告獨立一行,唔好塞入時間欄——塞入去成行就會爆出panel外面俾人切走
+    return r.warn ? main + `<tr><td class="warn" colspan="4">${r.warn}</td></tr>` : main;
   }).join('');
 }
 

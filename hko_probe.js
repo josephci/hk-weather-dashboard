@@ -374,6 +374,29 @@ async function huntDecimalSource() {
     else if (!n) console.log(`         ${first}`);
   }
 
+  // ③b 首頁自己嗰3個JS——上一輪先發現首頁個小數係client-side填,
+  // 而佢load緊 index.js / old_index.js / old_index_psr.js。
+  // 呢3個之前一直冇掘過(我只掘過awsgis嗰批同共用嗰批jquery)。
+  // 首頁個29.8°就係佢哋其中一個fetch返嚟填落去嘅——搵佢。
+  console.log("\n  \u2462b 首頁自己嗰3個JS,睇佢fetch邊條:");
+  for (const u of [
+    "https://www.hko.gov.hk/js/index.js",
+    "https://www.hko.gov.hk/js/old_index.js",
+    "https://www.hko.gov.hk/common/js/files/old_index_psr.js",
+    "https://www.hko.gov.hk/tc/js/index.js",
+  ]) {
+    const r = await getText(u, 10000);
+    if (!r.ok) { console.log(`    \u2717 ${r.status ?? r.err}  ${u.replace("https://www.hko.gov.hk", "")}`); continue; }
+    console.log(`    \u2713 ${String(r.body.length).padStart(7)}B  ${u.replace("https://www.hko.gov.hk", "")}`);
+    for (const x of absUrls(r.body, u)) console.log(`         URL \u2192 ${x.replace("https://", "")}`);
+    const frag = new Set();
+    for (const m of r.body.matchAll(/["'`]([\w./?=&:-]*(?:\.json|\.php|\.csv|\.txt|DYN_DAT|rhrread|latest_|minds)[\w./?=&:-]*)["'`]/gi)) {
+      if (m[1].length > 5 && m[1].length < 120) frag.add(m[1]);
+    }
+    for (const f of [...frag].slice(0, 15)) console.log(`         碎片 \u2192 ${f}`);
+    if (!frag.size) console.log("         (冇data碎片)");
+  }
+
   // ③ MyObservatory / wxinfo/aws — 之前挖到個名但冇追
   console.log("\n  ③ MyObservatory / /wxinfo/aws/ 呢兩條路:");
   for (const u of [

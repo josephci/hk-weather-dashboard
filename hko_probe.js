@@ -323,6 +323,74 @@ async function measureFanout() {
   console.log(`     但經worker嗰邊個fan-out成本係一樣要俾嘅——所以呢個差額先係重點。`);
 }
 
+// ⚠️2026-09-13用戶追問:「會唔會真係有精準到小數點而又快嘅源係你未搵到」。
+// 有一條線索我未追到底:天文台首頁12:08顯示「29.8°C 70% (12:00)」——**有小數**,
+// 而我證實咗 DYN_DAT_MINDS_RHRREAD.json 只有整數(30/69)。
+// 即係首頁嗰個小數唔係嚟自我讀緊嗰條,佢食緊第二條線。搵佢。
+//
+// 三個方向,唔靠估:
+//   ① 直接喺首頁HTML搵個小數,睇佢係server-side render定client-side fetch
+//   ② regional-weather嗰個資料夾試多啲檔名(之前只試過我估到嗰幾個)
+//   ③ MyObservatory同/wxinfo/aws/呢兩條之前挖到但冇追嘅路
+async function huntDecimalSource() {
+  console.log("\n" + "═".repeat(72));
+  console.log("🔎 追首頁嗰個小數(29.8°C)——邊條線餵佢?");
+  console.log("═".repeat(72));
+
+  // ① 首頁HTML入面有冇個小數?有 = server-side render,冇 = client-side fetch
+  for (const url of ["https://www.hko.gov.hk/tc/index.html", "https://www.hko.gov.hk/en/index.html"]) {
+    const r = await getText(url);
+    if (!r.ok) { console.log(`  ✗ ${url} ${r.status ?? r.err}`); continue; }
+    const hits = [...r.body.matchAll(/(.{45})(\d{2}\.\d)\s*(?:&deg;|°|C)(.{25})/g)].slice(0, 6);
+    console.log(`\n  ${url.replace("https://www.hko.gov.hk", "")} — 搵到 ${hits.length} 個「XX.X°」:`);
+    if (!hits.length) console.log("    冇 → 個小數係client-side由JS填,要睇佢fetch邊條");
+    for (const h of hits) console.log(`    …${h[1].replace(/\s+/g, " ").trim()} 【${h[2]}°】 ${h[3].replace(/\s+/g, " ").trim()}…`);
+    // 首頁自己load緊咩JS(唔係共用嗰堆jquery)
+    const own = [...r.body.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map((m) => m[1])
+      .filter((u) => !/jquery|bootstrap|moment|vue|flexslider|easing|cookie|rwdImage|html5shiv|respond/i.test(u));
+    console.log(`    首頁自己嘅JS: ${own.join(" , ") || "冇"}`);
+  }
+
+  // ② regional-weather資料夾:試多啲檔名(之前只試過我估到嗰幾個)
+  console.log("\n  ② regional-weather資料夾仲有咩檔:");
+  const names = [
+    "latest_1min_temperature.csv", "latest_5min_temperature.csv", "latest_10min_temperature.csv",
+    "latest_1min_temperature_uc.csv", "latest_1min_temperature.json",
+    "latest_since_midnight_maxmin.csv", "latest_since_midnight_maxmin_uc.csv",
+    "latest_1min_humidity.csv", "latest_1min_pressure.csv", "latest_10min_wind.csv",
+    "latest_since_midnight_rainfall.csv", "latest_1min_rainfall.csv",
+    "hko_readings.csv", "latest_readings.csv", "", "index.html",
+  ];
+  for (const n of names) {
+    const u = `${BASE_RW}/${n}`;
+    const r = await getText(u, 8000);
+    if (!r.ok) { if (n) console.log(`    ✗ ${r.status ?? r.err}  ${n}`); continue; }
+    const first = r.body.split(/\r?\n/).slice(0, 2).join(" | ").slice(0, 110);
+    // 有冇總部 + 有冇小數
+    const line = r.body.split(/\r?\n/).find((l) => STATION_RE.test((l.split(",")[1] ?? "").trim()));
+    const dec = line && /,\s*\d+\.\d/.test(line);
+    console.log(`    ✓ ${String(r.body.length).padStart(6)}B ${dec ? "⭐有小數" : "        "} ${n || "(資料夾本身)"}`);
+    if (line) console.log(`         總部: ${line.slice(0, 90)}`);
+    else if (!n) console.log(`         ${first}`);
+  }
+
+  // ③ MyObservatory / wxinfo/aws — 之前挖到個名但冇追
+  console.log("\n  ③ MyObservatory / /wxinfo/aws/ 呢兩條路:");
+  for (const u of [
+    "https://www.hko.gov.hk/tc/myobservatory.htm",
+    "https://www.hko.gov.hk/wxinfo/aws/",
+    "https://www.hko.gov.hk/wxinfo/aws/kpinfo.htm",
+    "https://maps.weather.gov.hk/ocf/dat/",
+  ]) {
+    const r = await getText(u, 8000);
+    if (!r.ok) { console.log(`    ✗ ${r.status ?? r.err}  ${u.replace("https://", "")}`); continue; }
+    const urls = absUrls(r.body, u).slice(0, 8);
+    console.log(`    ✓ ${String(r.body.length).padStart(6)}B  ${u.replace("https://", "")}`);
+    for (const x of urls) console.log(`         → ${x.replace("https://", "")}`);
+    if (!urls.length) console.log("         (挖唔到data URL)");
+  }
+}
+
 async function discoverSources() {
   console.log("\n" + "═".repeat(72));
   console.log("🔎 自動搵源:天文台個網頁攞緊邊條data線?");
@@ -458,6 +526,7 @@ async function main() {
   const dead = results.filter((r) => !r.ok);
   console.log(`唔存在/通唔到: ${dead.length ? dead.map((r) => `${r.name}(${r.note})`).join("、") : "冇"}`);
 
+  await huntDecimalSource();
   await measureFanout();
   await discoverSources();
 }

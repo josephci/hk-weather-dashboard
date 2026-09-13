@@ -397,6 +397,23 @@ async function huntDecimalSource() {
     if (!frag.size) console.log("         (冇data碎片)");
   }
 
+  // ③c 上一輪由首頁JS(old_index.js / old_index_psr.js)掘到呢幾條,全部未試過。
+  // /wxinfo/json/region.json 最有機會——首頁個小數多數就係佢餵。
+  console.log("\n  \u2462c 首頁JS fetch緊嗰幾條,逐條開嚟睇:");
+  for (const u of [
+    "https://www.hko.gov.hk/wxinfo/json/region.json",
+    "https://www.hko.gov.hk/wxinfo/json/yestemp.json",
+    "https://www.hko.gov.hk/wxinfo/json/normalFeb2.json",
+    "https://www.hko.gov.hk/wxinfo/uvinfo/record/uv15min_daws.txt",
+  ]) {
+    const r = await getText(u, 10000);
+    if (!r.ok) { console.log(`    \u2717 ${r.status ?? r.err}  ${u.replace("https://www.hko.gov.hk", "")}`); continue; }
+    const hasHq = /香港天文台|HK Observatory|Hong Kong Observatory|"HKO"|HKO/i.test(r.body);
+    const dec = /\d{2}\.\d/.test(r.body);
+    console.log(`    \u2713 ${String(r.body.length).padStart(6)}B ${hasHq ? "\u2b50有總部" : "        "} ${dec ? "\u2b50有小數" : "       "}  ${u.replace("https://www.hko.gov.hk", "")}`);
+    console.log(`         頭400字: ${r.body.replace(/\s+/g, " ").slice(0, 400)}`);
+  }
+
   // ③ MyObservatory / wxinfo/aws — 之前挖到個名但冇追
   console.log("\n  ③ MyObservatory / /wxinfo/aws/ 呢兩條路:");
   for (const u of [

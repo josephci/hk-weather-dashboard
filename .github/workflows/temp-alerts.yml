@@ -1,8 +1,26 @@
-name: HK Temp Alerts
+name: HK Temp Alerts (數據記錄 + 後備警報)
 
+# ⚠️2026-09-13:個cron由 */5 改做每個鐘。唔係我哋想慢,係GitHub根本唔跑。
+# 實測(26個鐘):
+#   temp-alerts  */5     應該312次,實際 8 次 = 平均195分鐘一次
+#   daily-bias   7個日cron  7/7 準時
+#   scan-cities  4個日cron  4/4 準時
+#   paper-trade  3個日cron  3/3 準時
+#   nightly-check 1個日cron 1/1 準時
+# 即係低頻cron GitHub全部照跑,淨係**高頻嗰個**俾佢靜靜哋跌咗97%。
+# 而且每個run都係綠色success,睇fail數一世都查唔到。
+#
+# 寫住 */5 但實際3個鐘一次,係一句大話——會令人以為有即時警報。
+# 所以改成每個鐘(GitHub真係會跑),同時講清楚:
+#
+#   ⚡ 即時警報唔係靠呢度,係靠 Cloudflare Worker 個 cron(worker.js)。
+#      呢個workflow淨係做兩件事:記history.csv/rhrread_log.csv、做後備警報。
+#
+# 順帶:由8次/日變24次/日,history.csv密咗3倍,
+# dashboard個趨勢圖同「未來1小時」個trendPts都會準啲。
 on:
   schedule:
-    - cron: "*/5 * * * *" # 每5分鐘（GitHub高峰期可能delay幾分鐘）
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 permissions:

@@ -46,12 +46,24 @@ async function checkWorkflowRuns(problems, notes) {
   await checkScheduleCadence(problems, notes, repo, token);
 }
 
-// 由cron算返一日應該跑幾多次(淨係識 */N 分鐘嗰種——高頻嗰啲先係要查嘅)
+// 由cron算返26個鐘應該跑幾多次。
+// ⚠️2026-09-13擴闊:本來淨係識 */N 分鐘。但temp-alerts由 */5 改咗做
+// 每個鐘("0 * * * *")之後,舊個parser會return null → 個守門靜靜哋熄咗,
+// 之後GitHub再跌run都冇人知。修一樣嘢順手熄咗個check,係最衰嗰種。
+// 一日跑幾次嗰啲(daily-bias/scan-cities)照樣唔查——本身就疏,查咗會出假警報。
 function cronRunsPer26h(cron) {
-  const m = String(cron).trim().match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return n > 0 ? Math.round((26 * 60) / n) : null;
+  const c = String(cron).trim();
+  let m;
+  if ((m = c.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/))) {        // */N 分鐘
+    const n = parseInt(m[1], 10);
+    return n > 0 ? Math.round((26 * 60) / n) : null;
+  }
+  if ((m = c.match(/^\d+\s+\*\s+\*\s+\*\s+\*$/))) return 26;        // 每個鐘
+  if ((m = c.match(/^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/))) {        // 每N個鐘
+    const n = parseInt(m[1], 10);
+    return n > 0 ? Math.round(26 / n) : null;
+  }
+  return null;
 }
 
 // ⚠️2026-09-09:用戶問點解Telegram啲香港警報咁疏。查GitHub API先發現——
@@ -75,7 +87,7 @@ async function checkScheduleCadence(problems, notes, repo, token) {
       const n = cronRunsPer26h(m[1]);
       if (n !== null && (expect === null || n > expect)) { expect = n; cron = m[1]; }
     }
-    if (!expect) continue; // 冇 */N 嗰種(一日跑幾次嗰啲疏本身就正常),唔查
+    if (!expect) continue; // 一日跑幾次嗰啲本身就疏,查咗會出假警報
 
     const res = await fetch(
       `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=100&event=schedule`,
@@ -91,9 +103,12 @@ async function checkScheduleCadence(problems, notes, repo, token) {
     const gapMin = (26 * 60) / runs.length;
     const ratio = runs.length / expect;
     if (ratio < 0.5) {
+      // ⚠️2026-09-13:呢個警報要講得出「跟住點做」。實測GitHub會照跑低頻cron
+      // (daily-bias 7/7、scan-cities 4/4),淨係跌高頻嗰個。所以出到呢句
+      // 唔係叫你去修GitHub,係叫你將個頻率寫返真,或者搬去Cloudflare Worker。
       problems.push(`${file} 排程寫住 ${cron}(26hr應該${expect}次),實際只跑咗${runs.length}次` +
-        ` = 平均${Math.round(gapMin)}分鐘先一次。GitHub靜靜哋跳咗schedule(每個run都係success,睇fail數係查唔到嘅),` +
-        `靠佢做即時警報唔work`);
+        ` = 平均${Math.round(gapMin)}分鐘先一次。GitHub會靜靜哋跌高頻schedule(每個run都係success,睇fail數查唔到)。` +
+        `→ 要即時就搬去Cloudflare Worker個cron;唔搬就將個cron寫返真實跑到嘅頻率,唔好留住句大話`);
     } else {
       notes.push(`${file} cadence ${runs.length}/${expect}次 (~${Math.round(gapMin)}分鐘一次)`);
     }

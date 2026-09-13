@@ -2500,6 +2500,21 @@ function renderSourceTable(json) {
   if (json.web && typeof json.web.value === 'number') add('網站JSON', json.web.value, '°', json.web.recordTime, '公報', { stale: true });
   else add('網站JSON', '—', '', null, '', { dead: json.webError || '攞唔到' });
 
+  // ⚠️2026-09-13加:region.json——天文台首頁自己食嗰條。
+  // race過n=8同CSV打和,**唔係為快**。擺喺度係因為佢俾到
+  // 「今日max嘅第二個獨立讀數」,而today.max就係結算嗰個數。
+  // 兩邊唔夾 = 你即刻知,唔使等到結算先發現。
+  if (json.region && typeof json.region.value === 'number') {
+    const rMax = json.region.max;
+    const csvMax = json.today?.max;
+    const clash = (typeof rMax === 'number' && typeof csvMax === 'number' && Math.abs(rMax - csvMax) > 0.05)
+      ? ` ⚠️同CSV個max(${csvMax.toFixed(1)})唔夾` : '';
+    add('region.json', `${json.region.value.toFixed(1)}（max ${rMax?.toFixed(1) ?? '?'}）`, '°',
+      json.region.recordTime, '觀測', { warn: clash });
+  } else {
+    add('region.json', '—', '', null, '', { dead: json.regionError || '攞唔到' });
+  }
+
   const vhhh = json.metars?.VHHH;
   if (vhhh && typeof vhhh.tempC === 'number') add('赤鱲角METAR', vhhh.tempC.toFixed(1), '°', vhhh.obsTime, '觀測');
   else add('赤鱲角METAR', '—', '', null, '', { dead: json.metarError || '攞唔到' });
@@ -2510,7 +2525,7 @@ function renderSourceTable(json) {
   tb.innerHTML = rows.map((r) => {
     const cls = r.dead ? 'dead' : r.isUsed ? 'used' : '';
     const timeCell = r.dead ? `⚠️ ${r.dead}`
-      : `${r.timeLabel}${hkClock(r.time) || '?'}${r.stale ? '(數據較舊)' : ''}`;
+      : `${r.timeLabel}${hkClock(r.time) || '?'}${r.stale ? '(數據較舊)' : ''}${r.warn || ''}`;
     const ageCell = r.dead ? '' : age(r.time);
     return `<tr class="${cls}"><td>${r.name}${r.isUsed ? ' ←大字用緊' : ''}</td>` +
       `<td class="v">${r.val}${r.unit}</td><td class="t">${timeCell}</td><td class="n">${ageCell}</td></tr>`;

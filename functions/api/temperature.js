@@ -162,6 +162,43 @@ export async function fetchHkoWeb() {
   return { value, recordTime, bulletinRaw: t || null };
 }
 
+// ⭐2026-09-13搵到:天文台首頁自己食嗰條(由首頁 old_index.js 掘出嚟)。
+//
+// ⚠️**唔係為快**。race過n=8,同1分鐘CSV打和(中位+0.0分)。
+//   所有總部源都喺同一個10分鐘grid上,冇一條搶先——呢點已經查死。
+//
+// 加佢係為咗一樣我哋而家冇嘅嘢:**今日max嘅第二個獨立讀數**。
+// today.max 就係結算嗰個數,而家全世界得 latest_since_midnight_maxmin.csv
+// 一條源。佢喺 data.weather.gov.hk,region.json 喺 www.hko.gov.hk——
+// 唔同host、唔同發佈路徑。兩邊唔夾就即刻知,唔使等到結算先發現。
+// (09-09總部報N/A嗰次就係得一條源,冇嘢對得住。)
+//
+// 格式:{"fields":[...,"temp","rh",...,"maxtemp","mintemp",...],
+//        "btime":"202609131220","datas":[["hko","30.1","68",...]]}
+// btime係完整YYYYMMDDHHMM——冇歧義(唔似DYN_DAT個裸HHMM害過我一次)。
+async function fetchRegion() {
+  const res = await fetch("https://www.hko.gov.hk/wxinfo/json/region.json", {
+    cache: "no-store",
+    headers: { "User-Agent": "Mozilla/5.0", Referer: "https://www.hko.gov.hk/" },
+  });
+  if (!res.ok) throw new Error(`region.json ${res.status}`);
+  const j = await res.json();
+  const f = j.fields || [];
+  const row = (j.datas || []).find((r) => String(r[0]).toLowerCase() === "hko");
+  if (!row) throw new Error(`region.json冇hko嗰行(有${(j.datas || []).length}個站,格式變咗?)`);
+  const b = String(j.btime || "");
+  if (!/^\d{12}$/.test(b)) throw new Error(`region.json個btime唔係12位: ${JSON.stringify(j.btime)}`);
+  const num = (name) => {
+    const i = f.indexOf(name);
+    const v = i >= 0 ? parseFloat(row[i]) : NaN;
+    return Number.isNaN(v) ? null : v;
+  };
+  return {
+    recordTime: parseTimestamp(b),
+    value: num("temp"), max: num("maxtemp"), min: num("mintemp"), rh: num("rh"),
+  };
+}
+
 // 揀邊條水喉:CSV有0.1°精度優先;但CSV滯後>20分鐘而rhrread更新鮮就轉用
 export function pickLive(csvLive, rrTemp) {
   const age = (t) => t ? Date.now() - new Date(t).getTime() : Infinity;
@@ -212,8 +249,8 @@ export async function onRequest(context) {
     }
   }
 
-  const [liveResult, maxMinResult, metarResult, rhrreadResult, webResult] = await Promise.allSettled([
-    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread(), fetchHkoWeb(),
+  const [liveResult, maxMinResult, metarResult, rhrreadResult, webResult, regionResult] = await Promise.allSettled([
+    fetchLive(), fetchMaxMin(), fetchMetar(), fetchRhrread(), fetchHkoWeb(), fetchRegion(),
   ]);
 
   const response = {};
@@ -225,6 +262,11 @@ export async function onRequest(context) {
   // 所以除咗picked嗰個,原封不動咁俾返每一條:csv / fast(rhrread) / web / metars。
   // 呢度加返未經揀選嘅CSV——之前佢淨係喺pickLive入面出現,揀輸咗就冇人見到。
   if (csvLive) response.csv = { ...csvLive, source: "csv" };
+  if (regionResult.status === "fulfilled" && regionResult.value?.value !== null) {
+    response.region = regionResult.value;
+  } else {
+    response.regionError = regionResult.status === "rejected" ? regionResult.reason.message : "region.json冇總部溫度";
+  }
 
   const live = pickLive(csvLive, rrTemp);
   if (live && live.value !== null) {

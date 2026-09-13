@@ -118,9 +118,33 @@ CSV / AWS-GIS / 天文台首頁      溫度=29.8 濕度=70   (12:00觀測)
 呢次公報時間當觀測時間)。**以後見到「某源快」,先問:
 快嘅係個timestamp,定係入面個讀數?搵一個唔會捨入嘅欄(例如濕度)去驗。**
 
+### 2026-09-13:搵齊晒,冇更快嘅小數源(唔使再搵)
+
+用戶追問「會唔會有精準到小數點而又快嘅源你未搵到」。掘到底:
+
+**三條獨立小數源,70分鐘race各n=8,全部同1分鐘CSV打和(中位+0.0分)**
+```
+region.json  +0.0 +0.0 +0.0 +0.7 +0.0 -0.7 +1.1 +0.0   中位 +0.0
+AWS-GIS      +0.0 +0.4 +0.0 +0.4 +0.0 -0.3 +1.1 -0.4   中位 +0.0
+```
+唔係巧合——佢哋食緊同一個10分鐘grid。**0.1°精度嘅硬地板已經確認。**
+
+淘汰名單(唔使再試):`latest_5min/10min_temperature.csv`、`.json`變體、
+資料夾listing、`_uc`變體、MyObservatory、`/wxinfo/aws/`(403)、
+`maps.weather.gov.hk/ocf/dat/`(403)、`DYN_DAT_MINDS_TEMP.json`(404)。
+
+**⭐但搵到 `https://www.hko.gov.hk/wxinfo/json/region.json`**
+(由首頁 `old_index.js` 掘出嚟——首頁自己嗰3個JS之前一直係漏網,
+`/wxinfo/json/` 呢個資料夾根本冇人知存在)。天文台首頁個小數就係佢餵。
+
+價值**唔係速度**,係:
+- `today.max`(結算嗰個數)嘅**第二條獨立源**,而且喺唔同host
+  (`www.hko.gov.hk` vs `data.weather.gov.hk`)——兩邊唔夾即刻知
+- 溫度同max/min都有小數、`btime`係完整YYYYMMDDHHMM(冇歧義)
+- 一個3.6KB檔有齊全港站
+
 `latestReadings_AWS1_v2.txt` = 「分區天氣資訊平台」自己食嗰條線
-(爬 `irwip-map-config.js` 掘出嚟)。**實測同CSV打和,中位差 +0.3分,
-5次入面仲輸咗2次** —— 換過去冇著數。
+(爬 `irwip-map-config.js` 掘出嚟)。**實測同CSV打和** —— 換過去冇著數。
 
 ⚠️用戶見過「天文台站頁11:40 vs 我哋11:30」,睇落差成10分鐘。
 **唔係。**因為數據10分鐘一格,兩邊到貨爭20秒都會睇落爭成格。

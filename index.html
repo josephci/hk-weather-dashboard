@@ -2493,7 +2493,11 @@ function renderSourceTable(json) {
   if (json.fast && typeof json.fast.value === 'number') add('rhrread', json.fast.value, '°', json.fast.recordTime, '觀測', { isUsed: used === 'rhrread' });
   else add('rhrread', '—', '', null, '', { dead: '攞唔到' });
 
-  if (json.web && typeof json.web.value === 'number') add('網站JSON', json.web.value, '°', json.web.recordTime, '公報');
+  // ⚠️2026-09-13實證:呢條個「公報時間」係新,但入面啲數係舊。
+  // 12:11同一刻:網站JSON溫度30/濕度69,而CSV+AWS+天文台首頁係29.8/70(12:00觀測)。
+  // 濕度69 vs 70兩個都係整數,唔存在捨入差異 → 唔同時刻嘅觀測。
+  // 所以個時間欄要寫明「數據較舊」,唔好俾人當佢係最新。
+  if (json.web && typeof json.web.value === 'number') add('網站JSON', json.web.value, '°', json.web.recordTime, '公報', { stale: true });
   else add('網站JSON', '—', '', null, '', { dead: json.webError || '攞唔到' });
 
   const vhhh = json.metars?.VHHH;
@@ -2506,7 +2510,7 @@ function renderSourceTable(json) {
   tb.innerHTML = rows.map((r) => {
     const cls = r.dead ? 'dead' : r.isUsed ? 'used' : '';
     const timeCell = r.dead ? `⚠️ ${r.dead}`
-      : `${r.timeLabel}${hkClock(r.time) || '?'}`;
+      : `${r.timeLabel}${hkClock(r.time) || '?'}${r.stale ? '(數據較舊)' : ''}`;
     const ageCell = r.dead ? '' : age(r.time);
     return `<tr class="${cls}"><td>${r.name}${r.isUsed ? ' ←大字用緊' : ''}</td>` +
       `<td class="v">${r.val}${r.unit}</td><td class="t">${timeCell}</td><td class="n">${ageCell}</td></tr>`;

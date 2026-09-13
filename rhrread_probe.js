@@ -146,10 +146,23 @@ async function pollCsv() {
 
 // 邊個先見到同一個戳 = 邊個快。呢個先係公平比較,
 // 單次抽樣「而家幾舊」會被10分鐘一格嘅grid放大成假差距。
-function raceReport(firstSeen) {
+function raceReport(firstSeen, rhrHits = []) {
   console.log("\n" + "═".repeat(64));
   console.log("🏁 邊個先攞到同一個觀測(戳) — 全部同1分鐘CSV比");
   console.log("═".repeat(64));
+  // rhrread 個整數究竟對應邊一刻?
+  if (rhrHits.length) {
+    console.log("\n── rhrread 個整數對得上邊一刻嘅CSV");
+    let ok = 0, bad = 0;
+    for (const h of rhrHits) {
+      const match = h.own !== undefined && Math.round(h.own) === h.val;
+      if (h.own !== undefined) (match ? ok++ : bad++);
+      console.log(`   ${h.hhmm} rhrread=${h.val}° 同刻CSV=${h.own ?? "?"}° ${match ? "✓" : "✗"}  對得上: ${h.hit.join(" ") || "冇"}`);
+    }
+    console.log(`   同刻對得上 ${ok}/${ok + bad}` +
+      (bad === 0 ? "" : ` — ⚠️有${bad}個對唔上,睇「對得上嘅時刻」欄睇佢係遲咗幾多分`));
+  }
+
   // 每條源同CSV比:負數 = 比CSV慢,正數 = 快
   for (const [key, name] of [["aws", "AWS-GIS檔"], ["rgn", "region.json(首頁源)"]]) {
     const both = [...firstSeen[key].keys()].filter((s) => firstSeen.csv.has(s)).sort();
@@ -243,6 +256,18 @@ async function main() {
   let polls = 0, errors = 0, lastRecordTime = null;
 
   const firstSeen = { aws: new Map(), csv: new Map(), rgn: new Map() };
+  // ⚠️2026-09-13用戶15:09影低:rhrread話15:00係32°,而CSV同一個15:00戳係31.3°。
+  // round(31.3)=31,唔係32。而今日max係31.7 → round=32。
+  // 即係rhrread嗰個32對得上「今日某一刻」,對唔上「15:00嗰刻」——
+  // 同網站JSON一模一樣嘅病:timestamp新,入面個讀數舊。
+  //
+  // 我09-07嗰4個樣本全部「啱」,但嗰陣溫度平,遲十分鐘round都係同一個整數
+  // ——冇分辨力。今日15:00啱啱由31.7回落到31.3,有分辨力,而佢肥咗。
+  //
+  // 所以要記低CSV逐個戳嘅**值**,等每次rhrread更新都可以問:
+  // 「佢個整數,對得上邊一個時刻嘅CSV?」——0分前?10分前?定係今日max?
+  const csvVals = new Map();   // "HH:MM" → 0.1°值
+  const rhrHits = [];          // 每次rhrread更新嘅lag診斷
   const seeStamp = (src, stamp, extra) => {
     if (!stamp || firstSeen[src].has(stamp)) return;
     firstSeen[src].set(stamp, Date.now());
@@ -257,7 +282,7 @@ async function main() {
     if (aws.err) console.log(`${hhmmss(new Date())} ⚠️ AWS: ${aws.err}`);
     else seeStamp("aws", aws.stamp, `${aws.temp}° max${aws.max}`);
     if (csv.err) console.log(`${hhmmss(new Date())} ⚠️ CSV: ${csv.err}`);
-    else seeStamp("csv", csv.stamp, `${csv.temp}°`);
+    else { seeStamp("csv", csv.stamp, `${csv.temp}°`); csvVals.set(csv.stamp, csv.temp); }
     if (r.err) {
       errors++;
       console.log(`${hhmmss(r.at)} ⚠️ ${r.err}`);
@@ -269,6 +294,18 @@ async function main() {
       } else {
         console.log(`${hhmmss(r.at)} ── 開始:recordTime=${String(r.recordTime).slice(11, 16)} ${r.value}°C`);
       }
+      // rhrread一更新就即刻診斷:佢個整數對得上邊一刻嘅CSV?
+      if (r.recordTime) {
+        const hhmm = String(r.recordTime).slice(11, 16);
+        const mm = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+        const hit = [...csvVals].filter(([, v]) => Math.round(v) === r.value)
+          .map(([t]) => `${t}(遲${mm(hhmm) - mm(t)}分)`);
+        const own = csvVals.get(hhmm);
+        rhrHits.push({ hhmm, val: r.value, own, hit });
+        console.log(`         ↳ rhrread ${r.value}° @${hhmm} | 同刻CSV ${own ?? "?"}°` +
+          `${own !== undefined ? `(round→${Math.round(own)})${Math.round(own) === r.value ? " ✓" : " ✗"}` : ""}` +
+          ` | 對得上嘅時刻: ${hit.length ? hit.join(" ") : "一個都冇"}`);
+      }
       updates.push(r);
       lastRecordTime = r.recordTime;
     }
@@ -278,7 +315,7 @@ async function main() {
 
   // 第一筆係基準唔係更新,唔計入cadence
   summarise(updates.slice(1).length ? updates : [], errors, polls);
-  raceReport(firstSeen);
+  raceReport(firstSeen, rhrHits);
   console.log(`\n完 香港時間 ${hhmmss(new Date())}`);
 }
 

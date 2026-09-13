@@ -80,6 +80,13 @@ async function poll() {
 // ============================================================
 const AWS_URL = "https://www.hko.gov.hk/wxinfo/awsgis/latestReadings_AWS1_v2.txt";
 const CSV_URL = "https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_1min_temperature.csv";
+// ⚠️2026-09-13搵到:天文台首頁自己食嗰條(由old_index.js掘出嚟)。
+// 格式:{"fields":["region","temp","rh",...,"maxtemp","mintemp",...],
+//        "btime":"202609131220","datas":[["hko","30.1","68",...]]}
+// 好處:溫度同今日max/min都有小數、btime係完整YYYYMMDDHHMM(冇歧義)、
+//      一個3.6KB檔有齊全港站。頂到我哋而家兩個CSV。
+// ⚠️但快唔快未證實——單次抽樣同CSV一樣係12:20。所以擺入race度量。
+const REGION_URL = "https://www.hko.gov.hk/wxinfo/json/region.json";
 
 async function pollAws() {
   try {
@@ -98,13 +105,28 @@ async function pollAws() {
   } catch (e) { return { err: e.message }; }
 }
 
+async function pollRegion() {
+  try {
+    const res = await fetch(REGION_URL, { cache: "no-store",
+      headers: { "User-Agent": "Mozilla/5.0", Referer: "https://www.hko.gov.hk/" } });
+    if (!res.ok) return { err: `HTTP ${res.status}` };
+    const j = await res.json();
+    const f = j.fields || [];
+    const iT = f.indexOf("temp"), iRh = f.indexOf("rh"), iMax = f.indexOf("maxtemp");
+    const row = (j.datas || []).find((r) => String(r[0]).toLowerCase() === "hko");
+    if (!row) return { err: `冇hko嗰行(有${(j.datas || []).length}個站)` };
+    const b = String(j.btime || "");
+    if (!/^\d{12}$/.test(b)) return { err: `btime唔係12位: ${JSON.stringify(j.btime)}` };
+    return { stamp: `${b.slice(8, 10)}:${b.slice(10, 12)}`,
+      temp: parseFloat(row[iT]), rh: row[iRh], max: parseFloat(row[iMax]) };
+  } catch (e) { return { err: e.message }; }
+}
+
 // ⚠️2026-09-09白行咗一次45分鐘race先發現:我自己另外寫咗個
 // /香港天文台|Hong Kong Observatory/ 去match,但個CSV實際寫嘅係
 // **"HK Observatory"** —— 128次poll全部「冇總部嗰行」,race出唔到結果。
-// production個STATION_PATTERN一早有齊三個寫法,我冇用返佢,自己重寫。
-// 呢個就係CLAUDE.md講嗰個「改一份漏一份」,今次輪到我中。
-// 而且呢個檔上面本身**一早有**個啱嘅STATION_PATTERN(rhrread嗰段用緊),
-// 我連佢都冇用,喺下面另外寫多個。所以而家直接用返上面嗰個,唔好再有第二份。
+// 呢個檔上面本身一早有個啱嘅STATION_PATTERN,我連佢都冇用,自己重寫多個。
+// 所以而家用返上面嗰個,唔好再有第二份。
 async function pollCsv() {
   try {
     const res = await fetch(CSV_URL, { cache: "no-store" });
@@ -126,25 +148,27 @@ async function pollCsv() {
 // 單次抽樣「而家幾舊」會被10分鐘一格嘅grid放大成假差距。
 function raceReport(firstSeen) {
   console.log("\n" + "═".repeat(64));
-  console.log("🏁 AWS-GIS檔 vs 1分鐘CSV:邊個先攞到同一個戳");
+  console.log("🏁 邊個先攞到同一個觀測(戳) — 全部同1分鐘CSV比");
   console.log("═".repeat(64));
-  const stamps = [...new Set([...firstSeen.aws.keys(), ...firstSeen.csv.keys()])].sort();
-  const both = stamps.filter((s) => firstSeen.aws.has(s) && firstSeen.csv.has(s));
-  if (!both.length) { console.log("兩邊都見過嘅戳唔夠,跑耐啲(--minutes=45)"); return; }
-  console.log("戳     AWS先見到   CSV先見到   AWS快幾多");
-  const diffs = [];
-  for (const s of both) {
-    const a = firstSeen.aws.get(s), c = firstSeen.csv.get(s);
-    const d = (c - a) / 60000;
-    diffs.push(d);
-    console.log(`${s}  ${hhmmss(new Date(a))}   ${hhmmss(new Date(c))}   ${d >= 0 ? "+" : ""}${d.toFixed(1)}分`);
+  // 每條源同CSV比:負數 = 比CSV慢,正數 = 快
+  for (const [key, name] of [["aws", "AWS-GIS檔"], ["rgn", "region.json(首頁源)"]]) {
+    const both = [...firstSeen[key].keys()].filter((s) => firstSeen.csv.has(s)).sort();
+    console.log(`\n── ${name} vs 1分鐘CSV`);
+    if (!both.length) { console.log("   兩邊都見過嘅戳唔夠,跑耐啲(--minutes=45)"); continue; }
+    const diffs = [];
+    for (const s of both) {
+      const a = firstSeen[key].get(s), c = firstSeen.csv.get(s);
+      const d = (c - a) / 60000;
+      diffs.push(d);
+      console.log(`   戳${s}  佢${hhmmss(new Date(a))}  CSV${hhmmss(new Date(c))}  ${d >= 0 ? "+" : ""}${d.toFixed(1)}分`);
+    }
+    diffs.sort((x, y) => x - y);
+    const med = diffs[Math.floor(diffs.length / 2)];
+    console.log(`   n=${diffs.length} 中位 ${med >= 0 ? "+" : ""}${med.toFixed(1)}分 → ` +
+      (diffs.length < 5 ? "⚠️樣本唔夠,唔好落結論"
+        : med > 0.5 ? `真係快${med.toFixed(1)}分,值得換`
+        : med < -0.5 ? "反而慢,唔好換" : "打和,換咗冇著數"));
   }
-  diffs.sort((x, y) => x - y);
-  const med = diffs[Math.floor(diffs.length / 2)];
-  console.log(`\nn=${diffs.length}  中位 ${med >= 0 ? "+" : ""}${med.toFixed(1)}分`);
-  console.log(med > 0.5 ? `→ AWS檔真係快 ${med.toFixed(1)} 分鐘,值得換過去`
-    : med < -0.5 ? `→ AWS檔反而慢,唔好換`
-    : `→ 兩邊打和(差${Math.abs(med).toFixed(1)}分),換咗都冇著數。用戶見到嗰步之差係grid放大出嚟嘅假象`);
 }
 
 function summarise(updates, errors, polls) {
@@ -218,7 +242,7 @@ async function main() {
   const updates = [];
   let polls = 0, errors = 0, lastRecordTime = null;
 
-  const firstSeen = { aws: new Map(), csv: new Map() };
+  const firstSeen = { aws: new Map(), csv: new Map(), rgn: new Map() };
   const seeStamp = (src, stamp, extra) => {
     if (!stamp || firstSeen[src].has(stamp)) return;
     firstSeen[src].set(stamp, Date.now());
@@ -226,8 +250,10 @@ async function main() {
   };
 
   while (Date.now() < until) {
-    const [r, aws, csv] = await Promise.all([poll(), pollAws(), pollCsv()]);
+    const [r, aws, csv, rgn] = await Promise.all([poll(), pollAws(), pollCsv(), pollRegion()]);
     polls++;
+    if (rgn.err) console.log(`${hhmmss(new Date())} ⚠️ region.json: ${rgn.err}`);
+    else seeStamp("rgn", rgn.stamp, `${rgn.temp}° rh${rgn.rh} max${rgn.max}`);
     if (aws.err) console.log(`${hhmmss(new Date())} ⚠️ AWS: ${aws.err}`);
     else seeStamp("aws", aws.stamp, `${aws.temp}° max${aws.max}`);
     if (csv.err) console.log(`${hhmmss(new Date())} ⚠️ CSV: ${csv.err}`);

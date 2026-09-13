@@ -163,6 +163,23 @@ async function probe([name, url, kind]) {
         if (!Number.isNaN(v)) { out.hko = true; out.sample = `${v}° (欄位 ${tempKey})`; }
       }
       if (!out.hko) out.note += ` · 冇搵到總部溫度欄,頭幾個: ${keys.slice(0, 5).join(", ")}`;
+      // ⚠️2026-09-13:用戶12:08影低天文台首頁寫住「29.8°C (12:00)」——**有小數**,
+      // 而我哋parse同一條JSON只攞到「30」。即係我用 .find() 撞啱咗一個整數欄,
+      // 而個小數欄一直喺度冇人讀。如果真係咁,我哋一路掉咗一條
+      // **又快(1.2分)又有0.1°精度**嘅源——嗰個先係結算用嘅精度。
+      // 所以唔好再靠估邊個key,成堆temp相關嘅欄全部print出嚟睇。
+      if (kind === "minds" && /RHRREAD/i.test(url)) {
+        const tempKeys = keys.filter((k) => /temp/i.test(k));
+        out.allTemp = tempKeys.map((k) => {
+          const raw = root[k];
+          const val = raw && typeof raw === "object" ? (raw.Val_Eng ?? raw.Val_Chi ?? JSON.stringify(raw)) : raw;
+          return `${k}=${val}`;
+        });
+        // 天文台總部相關嘅欄可能唔帶temp字(例如HongKongObservatory單獨一欄),
+        // 所以連帶Observatory/HKO字眼嘅都掃埋
+        out.allHko = keys.filter((k) => /observatory|HKO/i.test(k) && !/temp/i.test(k))
+          .map((k) => { const r = root[k]; return `${k}=${r && typeof r === "object" ? (r.Val_Eng ?? JSON.stringify(r)) : r}`; });
+      }
     } else if (kind === "rhrread") {
       const st = (j.temperature?.data ?? []).find((d) => STATION_RE.test(String(d.place).trim()));
       out.hko = !!st;
@@ -408,6 +425,14 @@ async function main() {
     if (r.hko) console.log(`   總部: ${r.sample ?? ""}  時間戳 ${r.stamp?.slice(11, 16) ?? "?"}  ${lag}`);
     if (r.stampRaw) console.log(`   ⚠️ 讀唔到時間戳,原文: ${r.stampRaw}`);
     if (r.header) console.log(`   欄位: ${r.header}`);
+    if (r.allTemp) {
+      console.log(`   🔬 所有帶temp嘅欄 (${r.allTemp.length}個):`);
+      for (const line of r.allTemp) console.log(`        ${line}`);
+    }
+    if (r.allHko && r.allHko.length) {
+      console.log(`   🔬 其他帶Observatory/HKO嘅欄 (${r.allHko.length}個):`);
+      for (const line of r.allHko.slice(0, 20)) console.log(`        ${line}`);
+    }
   }
 
   console.log(`\n${"═".repeat(72)}`);

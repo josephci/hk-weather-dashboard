@@ -146,21 +146,38 @@ async function pollCsv() {
 
 // 邊個先見到同一個戳 = 邊個快。呢個先係公平比較,
 // 單次抽樣「而家幾舊」會被10分鐘一格嘅grid放大成假差距。
-function raceReport(firstSeen, rhrHits = []) {
+// ⚠️2026-09-13連續兩次中同一個伏:先係rhrHits、跟住csvVals,
+// 兩個都喺main()入面宣告但喺呢度引用。node --check過到(syntax冇錯),
+// 一跑就ReferenceError。所以而家一律由caller傳入,唔靠closure。
+function raceReport(firstSeen, rhrHits = [], csvVals = new Map()) {
   console.log("\n" + "═".repeat(64));
   console.log("🏁 邊個先攞到同一個觀測(戳) — 全部同1分鐘CSV比");
   console.log("═".repeat(64));
   // rhrread 個整數究竟對應邊一刻?
   if (rhrHits.length) {
     console.log("\n── rhrread 個整數對得上邊一刻嘅CSV");
-    let ok = 0, bad = 0;
+    const mm = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+    let ok = 0, bad = 0, noCsv = 0;
     for (const h of rhrHits) {
-      const match = h.own !== undefined && Math.round(h.own) === h.val;
-      if (h.own !== undefined) (match ? ok++ : bad++);
-      console.log(`   ${h.hhmm} rhrread=${h.val}° 同刻CSV=${h.own ?? "?"}° ${match ? "✓" : "✗"}  對得上: ${h.hit.join(" ") || "冇"}`);
+      const own = csvVals.get(h.hhmm);
+      if (own === undefined) {
+        noCsv++;
+        console.log(`   ${h.hhmm} rhrread=${h.val}° — 同刻CSV成個run都冇收過,判斷唔到(唔計入分母)`);
+        continue;
+      }
+      const match = Math.round(own) === h.val;
+      match ? ok++ : bad++;
+      // 對唔上先講「咁佢對得上邊一刻」——對得上就唔使問
+      const hit = match ? [] : [...csvVals].filter(([, v]) => Math.round(v) === h.val)
+        .map(([t]) => `${t}(${mm(h.hhmm) - mm(t) >= 0 ? "遲" : "早"}${Math.abs(mm(h.hhmm) - mm(t))}分)`);
+      console.log(`   ${h.hhmm} rhrread=${h.val}° 同刻CSV=${own}°(round→${Math.round(own)}) ${match ? "✓" : "✗"}` +
+        (match ? "" : `  佢對得上: ${hit.join(" ") || "一格都冇(即係另一個量,唔係舊讀數)"}`));
     }
-    console.log(`   同刻對得上 ${ok}/${ok + bad}` +
-      (bad === 0 ? "" : ` — ⚠️有${bad}個對唔上,睇「對得上嘅時刻」欄睇佢係遲咗幾多分`));
+    const n = ok + bad;
+    console.log(`   同刻對得上 ${ok}/${n}${noCsv ? ` (另有${noCsv}個判斷唔到)` : ""}`);
+    if (n < 5) console.log("   ⚠️樣本唔夠(要5個以上),唔好落結論——rhrread一個鐘先出一次,要跑耐啲");
+    else if (bad === 0) console.log("   → rhrread就係round(同刻CSV),個時間戳可信");
+    else console.log(`   → ⚠️有${bad}個對唔上。睇「佢對得上」欄:有早幾格=舊讀數扮新戳;一格都冇=根本係另一個量`);
   }
 
   // 每條源同CSV比:負數 = 比CSV慢,正數 = 快
@@ -294,18 +311,11 @@ async function main() {
       } else {
         console.log(`${hhmmss(r.at)} ── 開始:recordTime=${String(r.recordTime).slice(11, 16)} ${r.value}°C`);
       }
-      // rhrread一更新就即刻診斷:佢個整數對得上邊一刻嘅CSV?
-      if (r.recordTime) {
-        const hhmm = String(r.recordTime).slice(11, 16);
-        const mm = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-        const hit = [...csvVals].filter(([, v]) => Math.round(v) === r.value)
-          .map(([t]) => `${t}(遲${mm(hhmm) - mm(t)}分)`);
-        const own = csvVals.get(hhmm);
-        rhrHits.push({ hhmm, val: r.value, own, hit });
-        console.log(`         ↳ rhrread ${r.value}° @${hhmm} | 同刻CSV ${own ?? "?"}°` +
-          `${own !== undefined ? `(round→${Math.round(own)})${Math.round(own) === r.value ? " ✓" : " ✗"}` : ""}` +
-          ` | 對得上嘅時刻: ${hit.length ? hit.join(" ") : "一個都冇"}`);
-      }
+      // ⚠️2026-09-13第一版喺**更新嗰刻**就即刻判斷,結果3/4個樣本作廢:
+      // rhrread 16:00 喺16:03到,但CSV 16:00 要16:09先出街——
+      // 即係我攞住一個仲未存在嘅數去對,出咗「同刻CSV=?」。
+      // 浪費咗一個3個鐘嘅run。而家淨係記低,等跑完CSV series齊晒先判斷。
+      if (r.recordTime) rhrHits.push({ hhmm: String(r.recordTime).slice(11, 16), val: r.value });
       updates.push(r);
       lastRecordTime = r.recordTime;
     }
@@ -315,7 +325,7 @@ async function main() {
 
   // 第一筆係基準唔係更新,唔計入cadence
   summarise(updates.slice(1).length ? updates : [], errors, polls);
-  raceReport(firstSeen, rhrHits);
+  raceReport(firstSeen, rhrHits, csvVals);
   console.log(`\n完 香港時間 ${hhmmss(new Date())}`);
 }
 

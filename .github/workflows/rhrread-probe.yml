@@ -24,7 +24,11 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # ⚠️2026-09-14:本來180分。要驗rhrread個時間戳,rhrread一個鐘先出一次,
+    # 要5個以上有分辨力樣本 = 起碼跑5-6個鐘。180分會喺中途斬咗個job,
+    # 而個總結係跑完先print——即係斬咗就乜結果都冇,白行3個鐘。
+    # GitHub Actions單job上限6個鐘,所以set 355分,留5分鐘俾checkout+總結。
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

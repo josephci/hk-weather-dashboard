@@ -923,16 +923,37 @@ async function pollLive() {
       // rhrread係正整點(:00),CSV係10分鐘一格。14:40嗰陣rhrread仲係14:00嘅數,
       // CSV已經係14:30——差半個鐘,溫度郁咗好正常,夾硬比就會**一路報假警報**。
       // 呢個repo唔准出假警報(出一次就冇人再信)。所以兩個時刻差超過5分鐘就唔比。
+      //
+      // ⚠️2026-09-15補返一個窿:上面只係「CSV到咗先比」。但你落注嗰個窗口
+      // (:04→:09)**同刻CSV根本未出街**,個⚡就淨係一個裸整數,金色粗體,
+      // 睇落最權威,而佢正正係嗰五分鐘冇得核對。
+      //
+      // 唔係理論問題,係實測到會錯:
+      //   09-15 16:00  rhrread 31°,同刻CSV 30.4°(→30) ✗
+      //                而 round(15:50嘅30.7°)=31 ← 佢報緊前一格嗰個讀數
+      //   09-13 15:00  rhrread 32°,同刻CSV 31.3°(→31) ✗  (用戶自己捉到)
+      //   09-15 13:00  rhrread 31°,同刻CSV 30.2°(→30) ✗  (用戶自己捉到)
+      // 兩個run夾埋11個有同刻CSV嘅鐘,1個對唔上;另外2次係用戶影screenshot捉到。
+      // 冇規律(唔關邊個鐘事:09-14整日6個鐘全對,09-15 13/16點兩次錯)。
+      //
+      // 所以喺CSV未到嗰五分鐘要老實講「未核對」。唔係嚇你唔好用——
+      // 快5分鐘就係佢淨係得嗰5分鐘嘅價值——係要你知住呢個數有機會肥一度。
       let mismatch = '';
+      let pending = '';
       if (json.live && typeof json.live.value === 'number' && json.live.source !== 'rhrread' && rt) {
-        const gapMin = Math.abs(new Date(json.live.recordTime).getTime() - new Date(rt).getTime()) / 60_000;
+        const gapMin = (new Date(rt).getTime() - new Date(json.live.recordTime).getTime()) / 60_000;
         const csvRounded = Math.round(json.live.value);
-        if (gapMin <= 5 && csvRounded !== fastSrc.value) {
-          mismatch = ` · ⚠️同一時刻嘅即時讀數${json.live.value.toFixed(1)}°→${csvRounded},對唔上`;
+        if (Math.abs(gapMin) <= 5) {
+          if (csvRounded !== fastSrc.value) {
+            mismatch = ` · ⚠️同一時刻嘅即時讀數${json.live.value.toFixed(1)}°→${csvRounded},對唔上`;
+          }
+        } else if (gapMin > 5) {
+          // ⚡個戳新過CSV = 同刻嗰格0.1°仲未出街,核對唔到
+          pending = ' · ⏳未核對(同刻CSV未出,約5分鐘後到)';
         }
       }
-      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}`;
-      fastTimeEl.style.color = mismatch ? 'var(--warm)' : '';
+      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}${pending}`;
+      fastTimeEl.style.color = mismatch ? 'var(--warm)' : (pending ? 'var(--muted)' : '');
     } else {
       fastEl.textContent = '--°';
       fastTimeEl.textContent = json.webError ? `⚠️ ${json.webError}` : '⚠️ 攞唔到';

@@ -364,6 +364,34 @@ async function checkWorker(problems, notes) {
       notes.push(`快水喉今次攞唔到,跌返rhrread: ${temp.body.webError}`);
     }
 
+    // ⚠️2026-09-14加:rhrread(⚡快水喉)個整數 vs 同一刻嘅0.1°CSV。
+    // 用戶2026-09-13 15:09影低:rhrread話15:00係32°,而CSV同一個15:00戳係31.3°。
+    // round(31.3)=31,差成一度——**捨入解釋唔到**。
+    // 09-14跑咗6個鐘(981個poll,6次更新)驗返:有分辨力嘅樣本3個,3個都係
+    // round(同刻CSV),而且排除咗「rhrread=今日max」(嗰日max 28.7成日冇變,
+    // 若果係max就應該成日出29°,實際出26/28/29/28/28/28)。
+    // 即係正常情況下佢係啱嘅,但09-13嗰次**到而家都解釋唔到**。
+    // ⚡係落注嗰個整數,肥一度就係買錯個bucket。所以每晚照consumer規矩對一次:
+    // 兩邊戳夾埋5分鐘內先比(唔同刻就唔關捨入事,比咗係false alarm)。
+    const fast = temp.body.fast, csvRaw = temp.body.csv;
+    if (fast && typeof fast.value === "number" && fast.recordTime &&
+        csvRaw && typeof csvRaw.value === "number" && csvRaw.recordTime) {
+      const gapMin = Math.abs(Date.parse(fast.recordTime) - Date.parse(csvRaw.recordTime)) / 60000;
+      if (gapMin <= 5) {
+        const diff = fast.value - Math.round(csvRaw.value);
+        if (Math.abs(diff) >= 1) {
+          problems.push(`⚡rhrread=${fast.value}°(${fast.recordTime}) vs 同刻CSV=${csvRaw.value}°` +
+            `(round→${Math.round(csvRaw.value)},${csvRaw.recordTime})差${diff > 0 ? "+" : ""}${diff}°——` +
+            `捨入解釋唔到。09-13撞過一次(32 vs 31.3)一直查唔到,呢個就係復發。` +
+            `⚡個整數係落注嗰個bucket,肥一度=買錯格,查實之前唔好跟⚡落注`);
+        } else {
+          notes.push(`⚡rhrread ${fast.value}° = round(同刻CSV ${csvRaw.value}°) ✓`);
+        }
+      } else {
+        notes.push(`⚡同CSV戳爭${Math.round(gapMin)}分(唔同刻),今次唔比`);
+      }
+    }
+
     // ⚠️2026-09-13加:today.max 就係結算嗰個數,而家有第二條獨立源
     // (region.json,喺www.hko.gov.hk;maxmin CSV喺data.weather.gov.hk)。
     // 兩條唔同host、唔同發佈路徑,理論上要一模一樣。唔夾 = 其中一邊出事,

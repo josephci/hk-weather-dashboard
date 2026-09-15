@@ -157,7 +157,11 @@ function raceReport(firstSeen, rhrHits = [], csvVals = new Map()) {
   if (rhrHits.length) {
     console.log("\n── rhrread 個整數對得上邊一刻嘅CSV");
     const mm = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-    let ok = 0, bad = 0, noCsv = 0;
+    const back = (t, n) => {
+      const v = mm(t) - n;
+      return v < 0 ? null : `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`;
+    };
+    let ok = 0, bad = 0, noCsv = 0, disc = 0, discOk = 0;
     for (const h of rhrHits) {
       const own = csvVals.get(h.hhmm);
       if (own === undefined) {
@@ -167,17 +171,37 @@ function raceReport(firstSeen, rhrHits = [], csvVals = new Map()) {
       }
       const match = Math.round(own) === h.val;
       match ? ok++ : bad++;
+      // ⚠️2026-09-14加:「對得上」唔等於證明到嘢。
+      // 如果遲10分/20分嗰個讀數round出嚟都係同一個整數,咁呢個樣本
+      // **根本分唔開「同刻」同「舊讀數扮新戳」**——兩個假設都過關。
+      // 我09-07攞4個「全中」落過結論,後來先知4個全部係咁,白撞。
+      // 所以另計一條有分辨力嘅分母,落結論淨係睇嗰條。
+      const nbr = [10, 20].map((n) => {
+        const t = back(h.hhmm, n);
+        return t === null ? undefined : csvVals.get(t);
+      }).filter((v) => v !== undefined);
+      const hasPower = nbr.some((v) => Math.round(v) !== Math.round(own));
+      if (hasPower) { disc++; if (match) discOk++; }
       // 對唔上先講「咁佢對得上邊一刻」——對得上就唔使問
       const hit = match ? [] : [...csvVals].filter(([, v]) => Math.round(v) === h.val)
         .map(([t]) => `${t}(${mm(h.hhmm) - mm(t) >= 0 ? "遲" : "早"}${Math.abs(mm(h.hhmm) - mm(t))}分)`);
       console.log(`   ${h.hhmm} rhrread=${h.val}° 同刻CSV=${own}°(round→${Math.round(own)}) ${match ? "✓" : "✗"}` +
+        `  ${hasPower ? "⭐有分辨力" : `冇分辨力(前10/20分round都係${Math.round(own)})`}` +
         (match ? "" : `  佢對得上: ${hit.join(" ") || "一格都冇(即係另一個量,唔係舊讀數)"}`));
     }
     const n = ok + bad;
     console.log(`   同刻對得上 ${ok}/${n}${noCsv ? ` (另有${noCsv}個判斷唔到)` : ""}`);
-    if (n < 5) console.log("   ⚠️樣本唔夠(要5個以上),唔好落結論——rhrread一個鐘先出一次,要跑耐啲");
-    else if (bad === 0) console.log("   → rhrread就係round(同刻CSV),個時間戳可信");
-    else console.log(`   → ⚠️有${bad}個對唔上。睇「佢對得上」欄:有早幾格=舊讀數扮新戳;一格都冇=根本係另一個量`);
+    console.log(`   當中**有分辨力**嘅 ${disc} 個,對得上 ${discOk}/${disc} ← 落結論淨係計呢條`);
+    if (disc < 5) {
+      console.log(`   ⚠️有分辨力樣本得${disc}個(要5個以上),**唔好落結論**。` +
+        `冇分辨力嗰啲「✓」證明唔到任何嘢——溫度平嗰陣,舊十分鐘都round成同一個整數。`);
+      console.log("   → 要跑溫度郁得快嗰段(升溫/回落),唔好揀平穩時段");
+    } else if (disc - discOk === 0) {
+      console.log("   → rhrread就係round(同刻CSV),個時間戳可信");
+    } else {
+      console.log(`   → ⚠️有${disc - discOk}個有分辨力樣本對唔上。睇「佢對得上」欄:` +
+        `有早幾格=舊讀數扮新戳;一格都冇=根本係另一個量`);
+    }
   }
 
   // 每條源同CSV比:負數 = 比CSV慢,正數 = 快

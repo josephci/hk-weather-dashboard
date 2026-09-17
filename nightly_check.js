@@ -406,6 +406,8 @@ async function checkWorker(problems, notes) {
     } else if (temp.body.regionError) {
       notes.push(`region.json攞唔到(冇咗today.max嘅交叉對照): ${temp.body.regionError}`);
     }
+
+    await checkOmAnchor(problems, notes, temp.body);
   }
 }
 
@@ -615,6 +617,70 @@ async function sendTelegram(text) {
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
   });
   if (!res.ok) console.error("Telegram失敗:", res.status, await res.text());
+}
+
+// ⚠️2026-09-17加。index.html個「未來1小時」panel由今日起唔再直接food
+// Open-Meteo個絕對溫度,改成攞佢**同一個模型自己嘅Δ**(下個鐘 − 當前鐘)
+// 貼喺天文台真讀數上面。點解:個grid cell唔係總部個站,有長期底位差,
+// 實測09-13差−3.2°、09-17差−0.7°,兩次都令個「預測」低過現時讀數。
+//
+// 呢個改動有兩個位會**靜靜哋壞**,兩個都唔會throw:
+//  ① Open-Meteo改咗time array(例如forecast_days=1唔再包當前鐘、
+//     或者timezone行為變),curIdx變-1 → omDelta=null → 靜靜哋跌返
+//     用絕對值,即係打回原形,而個panel照樣出數,你睇唔出。
+//  ② 個底位差本身冇人量過。而家冇logged series,所以每晚量一次記低,
+//     等佢自己累積——「冇得驗嘅嘢就唔好扮準」。
+async function checkOmAnchor(problems, notes, tempBody) {
+  const MODELS = ["gfs_seamless", "ecmwf_ifs025", "icon_seamless", "ukmo_seamless", "gem_seamless", "jma_seamless"];
+  const LAT = 22.302, LON = 114.174;
+  let data;
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&hourly=temperature_2m&timezone=Asia%2FHong_Kong&models=${MODELS.join(",")}&forecast_days=1`,
+      { cache: "no-store" });
+    if (!res.ok) { notes.push(`Open-Meteo ${res.status},今晚量唔到模型底位差`); return; }
+    data = await res.json();
+  } catch (e) { notes.push(`Open-Meteo連唔到(${e.message}),今晚量唔到模型底位差`); return; }
+
+  const times = data.hourly?.time ?? [];
+  const nowHK = new Date(Date.now() + 8 * 3600e3);
+  const curH = nowHK.getUTCHours(), nextH = (curH + 1) % 24;
+  const curIdx = times.findIndex((t) => parseInt(t.slice(11, 13), 10) === curH);
+  const idx = times.findIndex((t) => parseInt(t.slice(11, 13), 10) === nextH);
+  if (curIdx < 0) {
+    problems.push(`Open-Meteo個time array搵唔到當前鐘(${String(curH).padStart(2, "0")}:00,共${times.length}格,` +
+      `頭尾 ${times[0]}…${times[times.length - 1]})——index.html個「未來1小時」會靜靜哋跌返用模型絕對值,` +
+      `即係09-13/09-17嗰個「預測低過現時讀數」嘅bug返晒嚟`);
+    return;
+  }
+
+  const deltas = [], nowVals = [];
+  for (const m of MODELS) {
+    const arr = data.hourly?.[`temperature_2m_${m}`];
+    if (idx >= 0 && arr && arr[idx] != null && arr[curIdx] != null) {
+      deltas.push(arr[idx] - arr[curIdx]);
+      nowVals.push(arr[curIdx]);
+    }
+  }
+  if (deltas.length < 2) {
+    // idx<0 係正常嘅:23點嗰陣「下個鐘」已經係聽日,forecast_days=1冇。
+    if (idx < 0 && curH === 23) notes.push("而家23點,模型冇聽日00:00(正常),跳過底位差");
+    else problems.push(`6個模型得${deltas.length}個同時有當前鐘同下個鐘嘅數——` +
+      `Δ對齊做唔到,個「未來1小時」會跌返用絕對值`);
+    return;
+  }
+
+  const modelNow = nowVals.reduce((a, b) => a + b, 0) / nowVals.length;
+  const live = tempBody.live;
+  if (!live || typeof live.value !== "number") {
+    notes.push(`模型當前鐘${modelNow.toFixed(1)}°(${deltas.length}個模型),但攞唔到實測,量唔到底位差`);
+    return;
+  }
+  const bias = modelNow - live.value;
+  const dMean = deltas.reduce((a, b) => a + b, 0) / deltas.length;
+  // 唔設threshold嘈——底位差幾大先算大,我根本未量過。先記低,儲夠先講。
+  notes.push(`模型底位差 ${bias >= 0 ? "+" : ""}${bias.toFixed(1)}°(模型${modelNow.toFixed(1)}° vs 實測${live.value.toFixed(1)}°)` +
+    ` · 下個鐘Δ ${dMean >= 0 ? "+" : ""}${dMean.toFixed(1)}° · ${deltas.length}個模型`);
 }
 
 async function main() {

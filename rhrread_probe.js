@@ -161,7 +161,7 @@ function raceReport(firstSeen, rhrHits = [], csvVals = new Map()) {
       const v = mm(t) - n;
       return v < 0 ? null : `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`;
     };
-    let ok = 0, bad = 0, noCsv = 0, disc = 0, discOk = 0;
+    let ok = 0, bad = 0, noCsv = 0, disc = 0, discOk = 0, maxSame = 0, maxSameBad = 0;
     for (const h of rhrHits) {
       const own = csvVals.get(h.hhmm);
       if (own === undefined) {
@@ -185,12 +185,27 @@ function raceReport(firstSeen, rhrHits = [], csvVals = new Map()) {
       // 對唔上先講「咁佢對得上邊一刻」——對得上就唔使問
       const hit = match ? [] : [...csvVals].filter(([, v]) => Math.round(v) === h.val)
         .map(([t]) => `${t}(${mm(h.hhmm) - mm(t) >= 0 ? "遲" : "早"}${Math.abs(mm(h.hhmm) - mm(t))}分)`);
+      // 肥嗰陣係咪啱啱等於round(今日max)?兩次撞到都係,但n=2分唔到規律定巧合,
+      // 所以逐行標返,等跑完自己數。
+      const maxTag = typeof h.max === "number"
+        ? `  今日max=${h.max}°→${Math.round(h.max)}${Math.round(h.max) === h.val ? " ⚠️同rhrread一樣" : ""}`
+        : "";
+      if (typeof h.max === "number" && Math.round(h.max) === h.val) { maxSame++; if (!match) maxSameBad++; }
       console.log(`   ${h.hhmm} rhrread=${h.val}° 同刻CSV=${own}°(round→${Math.round(own)}) ${match ? "✓" : "✗"}` +
         `  ${hasPower ? "⭐有分辨力" : `冇分辨力(前10/20分round都係${Math.round(own)})`}` +
-        (match ? "" : `  佢對得上: ${hit.join(" ") || "一格都冇(即係另一個量,唔係舊讀數)"}`));
+        (match ? "" : `  佢對得上: ${hit.join(" ") || "一格都冇(即係另一個量,唔係舊讀數)"}`) + maxTag);
     }
     const n = ok + bad;
     console.log(`   同刻對得上 ${ok}/${n}${noCsv ? ` (另有${noCsv}個判斷唔到)` : ""}`);
+    if (bad > 0) {
+      console.log(`   「肥嗰陣係咪啱啱等於round(今日max)」:對唔上嘅${bad}個入面有${maxSameBad}個係`);
+      if (maxSameBad === bad && bad >= 2) {
+        console.log("   → ⚠️對唔上嗰啲**全部**落喺今日max度。但要小心:max本身就係今日出現過嘅讀數,");
+        console.log("     「舊讀數扮新戳」同「報緊max」兩個假設都會出呢個結果。要分開,睇「佢對得上」欄係咪淨得max嗰格");
+      } else if (maxSame > 0) {
+        console.log(`   → 全程有${maxSame}個樣本個值啱啱等於round(max)(當中${bad - maxSameBad}個係對得上嘅),即係呢個「巧合」本身好常見,證明唔到嘢`);
+      }
+    }
     console.log(`   當中**有分辨力**嘅 ${disc} 個,對得上 ${discOk}/${disc} ← 落結論淨係計呢條`);
     if (disc < 5) {
       console.log(`   ⚠️有分辨力樣本得${disc}個(要5個以上),**唔好落結論**。` +
@@ -309,6 +324,14 @@ async function main() {
   // 「佢個整數,對得上邊一個時刻嘅CSV?」——0分前?10分前?定係今日max?
   const csvVals = new Map();   // "HH:MM" → 0.1°值
   const rhrHits = [];          // 每次rhrread更新嘅lag診斷
+  // ⚠️2026-09-15加:兩次撞到嘅肥一度,rhrread都啱啱等於round(今日max):
+  //   09-13 15:00 rhr 32,max 31.7→32(同刻CSV 31.3→31)
+  //   09-15 13:00 rhr 31,max 31.4→31(同刻CSV 30.2→30)
+  // 但09-14成日冇肥,而嗰日max 28.7→29,rhrread出26/28/29/28/28/28
+  // ——即係「rhrread就係max」已經排除咗。剩返嘅問題係
+  // 「肥嗰陣係咪次次都啱啱落喺max度」,n=2分唔到係規律定巧合。
+  // 所以每次更新順手記低嗰刻嘅today max,等個表自己數,唔使我事後靠記憶砌。
+  let lastMax = null;
   const seeStamp = (src, stamp, extra) => {
     if (!stamp || firstSeen[src].has(stamp)) return;
     firstSeen[src].set(stamp, Date.now());
@@ -319,7 +342,10 @@ async function main() {
     const [r, aws, csv, rgn] = await Promise.all([poll(), pollAws(), pollCsv(), pollRegion()]);
     polls++;
     if (rgn.err) console.log(`${hhmmss(new Date())} ⚠️ region.json: ${rgn.err}`);
-    else seeStamp("rgn", rgn.stamp, `${rgn.temp}° rh${rgn.rh} max${rgn.max}`);
+    else {
+      seeStamp("rgn", rgn.stamp, `${rgn.temp}° rh${rgn.rh} max${rgn.max}`);
+      if (typeof rgn.max === "number") lastMax = rgn.max;
+    }
     if (aws.err) console.log(`${hhmmss(new Date())} ⚠️ AWS: ${aws.err}`);
     else seeStamp("aws", aws.stamp, `${aws.temp}° max${aws.max}`);
     if (csv.err) console.log(`${hhmmss(new Date())} ⚠️ CSV: ${csv.err}`);
@@ -339,7 +365,7 @@ async function main() {
       // rhrread 16:00 喺16:03到,但CSV 16:00 要16:09先出街——
       // 即係我攞住一個仲未存在嘅數去對,出咗「同刻CSV=?」。
       // 浪費咗一個3個鐘嘅run。而家淨係記低,等跑完CSV series齊晒先判斷。
-      if (r.recordTime) rhrHits.push({ hhmm: String(r.recordTime).slice(11, 16), val: r.value });
+      if (r.recordTime) rhrHits.push({ hhmm: String(r.recordTime).slice(11, 16), val: r.value, max: lastMax });
       updates.push(r);
       lastRecordTime = r.recordTime;
     }

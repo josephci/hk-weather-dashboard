@@ -923,16 +923,37 @@ async function pollLive() {
       // rhrread係正整點(:00),CSV係10分鐘一格。14:40嗰陣rhrread仲係14:00嘅數,
       // CSV已經係14:30——差半個鐘,溫度郁咗好正常,夾硬比就會**一路報假警報**。
       // 呢個repo唔准出假警報(出一次就冇人再信)。所以兩個時刻差超過5分鐘就唔比。
+      //
+      // ⚠️2026-09-15補返一個窿:上面只係「CSV到咗先比」。但你落注嗰個窗口
+      // (:04→:09)**同刻CSV根本未出街**,個⚡就淨係一個裸整數,金色粗體,
+      // 睇落最權威,而佢正正係嗰五分鐘冇得核對。
+      //
+      // 唔係理論問題,係實測到會錯:
+      //   09-15 16:00  rhrread 31°,同刻CSV 30.4°(→30) ✗
+      //                而 round(15:50嘅30.7°)=31 ← 佢報緊前一格嗰個讀數
+      //   09-13 15:00  rhrread 32°,同刻CSV 31.3°(→31) ✗  (用戶自己捉到)
+      //   09-15 13:00  rhrread 31°,同刻CSV 30.2°(→30) ✗  (用戶自己捉到)
+      // 兩個run夾埋11個有同刻CSV嘅鐘,1個對唔上;另外2次係用戶影screenshot捉到。
+      // 冇規律(唔關邊個鐘事:09-14整日6個鐘全對,09-15 13/16點兩次錯)。
+      //
+      // 所以喺CSV未到嗰五分鐘要老實講「未核對」。唔係嚇你唔好用——
+      // 快5分鐘就係佢淨係得嗰5分鐘嘅價值——係要你知住呢個數有機會肥一度。
       let mismatch = '';
+      let pending = '';
       if (json.live && typeof json.live.value === 'number' && json.live.source !== 'rhrread' && rt) {
-        const gapMin = Math.abs(new Date(json.live.recordTime).getTime() - new Date(rt).getTime()) / 60_000;
+        const gapMin = (new Date(rt).getTime() - new Date(json.live.recordTime).getTime()) / 60_000;
         const csvRounded = Math.round(json.live.value);
-        if (gapMin <= 5 && csvRounded !== fastSrc.value) {
-          mismatch = ` · ⚠️同一時刻嘅即時讀數${json.live.value.toFixed(1)}°→${csvRounded},對唔上`;
+        if (Math.abs(gapMin) <= 5) {
+          if (csvRounded !== fastSrc.value) {
+            mismatch = ` · ⚠️同一時刻嘅即時讀數${json.live.value.toFixed(1)}°→${csvRounded},對唔上`;
+          }
+        } else if (gapMin > 5) {
+          // ⚡個戳新過CSV = 同刻嗰格0.1°仲未出街,核對唔到
+          pending = ' · ⏳未核對(同刻CSV未出,約5分鐘後到)';
         }
       }
-      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}`;
-      fastTimeEl.style.color = mismatch ? 'var(--warm)' : '';
+      fastTimeEl.textContent = `${fastLabel} · ${clock}嘅數 · ${rt ? formatRelativeTime(rt) : ''}${tail}${mismatch}${pending}`;
+      fastTimeEl.style.color = mismatch ? 'var(--warm)' : (pending ? 'var(--muted)' : '');
     } else {
       fastEl.textContent = '--°';
       fastTimeEl.textContent = json.webError ? `⚠️ ${json.webError}` : '⚠️ 攞唔到';
@@ -2244,7 +2265,17 @@ function renderLocks(elId, buckets, realizedMax) {
 // ============================================================
 // 未來1小時預測（趨勢+降雨+模型三合一）
 // ============================================================
-let omHourly = null;   // Open-Meteo下一個整點溫度(6模型平均)
+let omHourly = null;   // Open-Meteo下一個整點溫度(6模型平均,**絕對值**)
+// ⚠️2026-09-17加:模型嘅**變化量**(下個鐘 − 而家嗰個鐘),同埋佢自己
+// 對當前鐘嘅絕對值。點解要分開:Open-Meteo俾嘅係個grid cell嘅2m溫度,
+// 唔係天文台總部個站——兩者有個長期存在嘅**底位差**,而呢個差
+// 一直原封不動咁溝入個預測度。實測見過兩次:
+//   09-13 14:27 模型28.2° vs 實測31.4°  差 −3.2°
+//   09-17 10:44 模型28.6° vs 實測29.3°  差 −0.7°
+// 兩次都令個「預測」低過現時讀數。模型有用嘅係「跌定升幾多」,
+// 唔係「幾多度」。所以攞佢個Δ,貼喺真讀數上面。
+let omDelta = null;    // 6模型平均 (下個鐘 − 當前鐘),°C
+let omNowModel = null; // 6模型平均嘅當前鐘絕對值,淨係攞嚟show個底位差
 let omPeakRain = null; // 今日高峰時段(12-16時)嘅6模型平均總降雨(mm),俾階梯雨天修正用
 // ⚠️2026-09-10:呢個function本來成個catch係 /* 靜默 */。Open-Meteo一死,
 // omHourly永遠null,個預測panel就一路「少咗模型」——但冇任何地方講得出
@@ -2262,15 +2293,22 @@ async function fetchOmHourly() {
     const nowHK = new Date(Date.now() + 8*3600*1000);
     const targetHour = (nowHK.getUTCHours() + 1) % 24; // 下一個整點
     const idx = times.findIndex(t => parseInt(t.slice(11,13),10) === targetHour);
+    const curIdx = times.findIndex(t => parseInt(t.slice(11,13),10) === nowHK.getUTCHours());
     const peakIdx = [];
     times.forEach((t, i) => {
       const h = parseInt(t.slice(11,13), 10);
       if (h >= 12 && h <= 16) peakIdx.push(i);
     });
-    const vals = [], peakSums = [];
+    const vals = [], peakSums = [], deltas = [], nowVals = [];
     for (const m of MODELS) {
       const arr = data.hourly?.[`temperature_2m_${m}`];
       if (idx >= 0 && arr && arr[idx] != null) vals.push(arr[idx]);
+      // Δ一定要同一個模型自己減自己,唔可以攞「6模型平均下個鐘」減
+      // 「6模型平均今個鐘」——如果有model缺數,兩邊個成員唔同就會砌出假Δ
+      if (idx >= 0 && curIdx >= 0 && arr && arr[idx] != null && arr[curIdx] != null) {
+        deltas.push(arr[idx] - arr[curIdx]);
+        nowVals.push(arr[curIdx]);
+      }
       const pArr = data.hourly?.[`precipitation_${m}`];
       if (pArr && peakIdx.length) {
         let s = 0, has = false;
@@ -2280,6 +2318,10 @@ async function fetchOmHourly() {
     }
     if (vals.length >= 2) omHourly = vals.reduce((a,b)=>a+b,0)/vals.length;
     else omError = `6個模型得${vals.length}個有下個鐘嘅數`;
+    if (deltas.length >= 2) {
+      omDelta = deltas.reduce((a,b)=>a+b,0)/deltas.length;
+      omNowModel = nowVals.reduce((a,b)=>a+b,0)/nowVals.length;
+    } else { omDelta = null; omNowModel = null; }
     if (peakSums.length >= 2) omPeakRain = peakSums.reduce((a,b)=>a+b,0)/peakSums.length;
     if (vals.length >= 2) omError = null;
   } catch (e) { omError = e.message || '連唔到'; }
@@ -2319,8 +2361,23 @@ function pollHourNowcast() {
   const raining = localRain !== null && localRain >= 0.5;
   rainEl.textContent = localRain === null ? '--' : localRain.toFixed(1) + 'mm';
 
-  // 輸入3: 模型下一個整點預測
-  const modelNext = omHourly;
+  // 輸入3: 模型下一個整點預測。
+  // ⚠️2026-09-17改:用**Δ貼返真讀數**,唔再直接food佢個絕對值。
+  // 用戶09-17 10:44影低:即時29.3°、趨勢+0.1°/hr、0.0mm雨,
+  // 個panel寫「預測29.0° · 距今日max 0.5° → 破max機率:低」。
+  // 拆返個數:trendProj=29.3+0.1×0.6=29.36,proj=29.0 → 模型嗰邊係28.6°。
+  // 即係一個乾燥、升緊嘅時候,個「預測」低過現時讀數0.3°,
+  // 而個結論仲叫你放心。同09-13 14:27嗰次(模型28.2 vs 實測31.4)一模一樣,
+  // 淨係細部咗——**09-13嗰次修咗個警告,冇修個成因**。
+  //
+  // 成因唔係模型「唔準」,係佢個grid cell根本唔係天文台總部個站,
+  // 有個長期底位差。佢有用嘅資訊係「下個鐘升定跌幾多」。
+  // 所以:modelProj = 真讀數 + 模型自己嘅Δ。底位差自動消失。
+  // ⚠️冇量過個Δ本身準唔準(要logged series先量得到,而家冇)。
+  // 呢個唔係一個調校出嚟嘅倍數,係「唔好用一個明知錯咗底位嘅絕對值」,
+  // 所以就算Δ唔夠好,都唔會衰過原本。個底位差會show出嚟,等你自己睇住。
+  const modelNext = (omDelta !== null) ? currentRealized + omDelta : omHourly;
+  const modelAnchored = omDelta !== null;
 
   // 兩個輸入都冇 = 冇嘢預測得到。唔好攞現時溫度扮預測。
   if (slope === null && modelNext === null) {
@@ -2374,7 +2431,13 @@ function pollHourNowcast() {
   //      唔准出「機率:低」呢類叫人放心嘅結論
   const bothInputs = trendProj !== null && modelNext !== null;
   const spread = bothInputs ? Math.abs(trendProj - modelNext) : 0;
-  const incoherent = !raining && slope !== null && slope >= -0.1 && proj < currentRealized - 0.3;
+  // ⚠️2026-09-17:原本寫 `proj < currentRealized - 0.3`。用戶10:44嗰張
+  // 係 proj=29.0、currentRealized=29.3 —— 29.0 < 29.0 係 false,
+  // **啱啱好差一條頭髮走甩咗**,個自相矛盾嘅預測照出,一句警告都冇。
+  // 呢個repo最擅長嘅就係呢種:個guard存在、睇落做緊嘢、但邊界差0.0001。
+  // 改成 <= 兼留返浮點容差(0.3喺二進制唔係整數)。
+  const incoherent = !raining && slope !== null && slope >= -0.1 &&
+    proj - (currentRealized - 0.3) < 1e-9;
   if (incoherent) {
     verdict = `⚠️預測${proj.toFixed(1)}°低過現時讀數${currentRealized.toFixed(1)}°,但唔落雨兼趨勢${slope >= 0 ? "+" : ""}${slope.toFixed(1)}°/hr` +
       `${bothInputs ? `(趨勢外推${trendProj.toFixed(1)}° vs 模型${modelNext.toFixed(1)}°,爭${spread.toFixed(1)}°)` : ""}` +
@@ -2385,8 +2448,13 @@ function pollHourNowcast() {
   }
   // 講清楚個預測係邊兩樣夾出嚟,少咗邊樣。之前只寫「趨勢數據不足」,
   // 但模型都未load嗰陣一樣係寫呢句,分唔到係少咗趨勢定少咗模型。
-  const src = slope === null ? '（純模型,趨勢未夠3點）'
-            : modelNext === null ? `（純趨勢,模型${omError ? '死咗:' + omError : '未到'}）` : '';
+  // ⚠️2026-09-17加:把個模型底位差show出嚟。冇logged series量唔到佢平時幾大,
+  // 但你每次影screenshot就係一次量度——擺出嚟先至累積到證據。
+  const bias = (modelAnchored && omNowModel !== null)
+    ? ` · 模型底位${omNowModel - currentRealized >= 0 ? '高' : '低'}${Math.abs(omNowModel - currentRealized).toFixed(1)}°,已對齊(只用佢個${omDelta >= 0 ? '+' : ''}${omDelta.toFixed(1)}°變化)`
+    : '';
+  const src = (slope === null ? '（純模型,趨勢未夠3點）'
+            : modelNext === null ? `（純趨勢,模型${omError ? '死咗:' + omError : '未到'}）` : '') + bias;
   verdictEl.textContent = verdict + src;
 }
 

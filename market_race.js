@@ -155,6 +155,12 @@ let clobError = null;
 async function fetchClobMids(tokens) {
   const entries = Object.entries(tokens || {});
   if (!entries.length) return null;
+  // ⚠️2026-09-19 22:31實測:batch回 HTTP 400(11隻token)。
+  // 但淨係印個400分唔到係:(a)個body shape錯 (b)市場已經結咗冇order book。
+  // 嗰晚個市場啱啱resolve咗(100→0 / 0→100),兩個都講得通。
+  // CLAUDE.md:分唔清死因嘅log本身就係bug → 所以要印個response body,
+  // 而且batch死咗要逐隻token試返,睇係「全部死」定「淨係某幾隻死」。
+  let batchErr = null;
   try {
     const res = await fetch("https://clob.polymarket.com/midpoints", {
       method: "POST",
@@ -162,21 +168,42 @@ async function fetchClobMids(tokens) {
       cache: "no-store",
       body: JSON.stringify({ params: entries.map(([, id]) => ({ token_id: id })) }),
     });
-    if (!res.ok) throw new Error(`midpoints HTTP ${res.status}(試咗${entries.length}隻token)`);
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 200);
+      throw new Error(`HTTP ${res.status} body=${JSON.stringify(body)}`);
+    }
     const j = await res.json();
     const out = {};
     for (const [label, id] of entries) {
       const v = j?.[id];
       if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
     }
-    if (!Object.keys(out).length) {
-      throw new Error(`midpoints回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`);
-    }
-    return out;
-  } catch (e) {
-    clobError = e.message;
-    return null;
+    if (Object.keys(out).length) return out;
+    batchErr = `回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`;
+  } catch (e) { batchErr = e.message; }
+
+  // 逐隻試:分得開「個endpoint用錯shape」(全部同一個死法)
+  // 同「呢個市場冇book」(通,但冇價)
+  const out = {};
+  const errs = [];
+  for (const [label, id] of entries) {
+    try {
+      const r = await fetch(`https://clob.polymarket.com/midpoint?token_id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!r.ok) { errs.push(`${r.status}`); continue; }
+      const j = await r.json();
+      const v = j?.mid ?? j?.midpoint;
+      if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
+      else errs.push(`200但冇mid欄(${Object.keys(j || {}).join("/") || "空"})`);
+    } catch (e) { errs.push(e.message); }
   }
+  if (Object.keys(out).length) {
+    clobError = `batch死咗(${batchErr}),但逐隻GET攞到${Object.keys(out).length}/${entries.length}`;
+    return out;
+  }
+  const tally = errs.reduce((m, e) => (m[e] = (m[e] || 0) + 1, m), {});
+  clobError = `batch:${batchErr} | 逐隻GET ${entries.length}隻都唔得:` +
+    Object.entries(tally).map(([e, n]) => `${e}×${n}`).join(" ");
+  return null;
 }
 
 // ---------- 收集 ----------
@@ -254,10 +281,16 @@ function channelLatency(rows) {
   const out = {};
   for (const ch of ["csv", "rhr", "web", "metar"]) {
     const seen = new Set(), lags = [];
+    let first = true;
     for (const r of rows) {
       const s = r[ch]?.stamp;
       if (!s || seen.has(s)) continue;
       seen.add(s);
+      // ⚠️2026-09-19:第一個見到嘅戳一定要剔走。我哋啱啱開機嗰陣,嗰份
+      // 可能已經出咗街半個鐘——「我幾時見到」唔等於「佢幾時出街」。
+      // 今晚21分鐘個run就係咁出咗「rhrread 中位31.4分鐘(n=1)」同
+      // 「METAR最慢31.4分」,兩個都係假數。09-07嗰個21.6分METAR一樣係呢個。
+      if (first) { first = false; continue; }
       const obs = parseStamp(s, ch);
       if (obs) lags.push((r.at - obs) / 60000); // 分鐘
     }
@@ -376,8 +409,14 @@ function feedResolution(rows, key) {
     prev = s;
   }
   if (!gaps.length) return null;
-  const s = gaps.slice().sort((a, b) => a - b);
-  return { n: gaps.length, median: s[Math.floor(s.length / 2)], min: s[0], max: s[s.length - 1] };
+  // ⚠️2026-09-19:個log跨咗12日(09-07嗰批 + 今晚嗰批),中間個「間隔」
+  // 出咗 17658.7 分鐘 —— 嗰個唔係「市場幾耐郁一次」,係兩次run之間隔咗12日。
+  // 中位數頂得住,但最大值會嚇死人兼誤導。>60分鐘一律當session邊界剔走。
+  const real = gaps.filter((g) => g <= 60);
+  if (!real.length) return null;
+  const s = real.slice().sort((a, b) => a - b);
+  return { n: real.length, median: s[Math.floor(s.length / 2)], min: s[0], max: s[s.length - 1],
+    dropped: gaps.length - real.length };
 }
 
 function analyse() {

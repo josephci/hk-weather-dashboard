@@ -508,6 +508,11 @@ function checkCsvSchema(problems, notes) {
     ["forecast_log.csv", 8, "model_diagnostics.js / nightly_check.js 硬編碼 c[7] 攞realized"],
     ["calibration_log.csv", 5, "index.html / nightly_check.js 硬編碼 c[4] 攞hit"],
     ["station_wedge.csv", 3, "station_wedge.js 讀 date,hkoMax,vhhhMax"],
+    // ⚠️2026-09-19加一欄clobPrices(gamma個價量化到5分鐘,要攞clob midpoint先睇到真嘢)。
+    // market_race.js個HEADER淨係喺「個檔唔存在」嗰陣寫,所以加欄之後舊檔
+    // 會永遠留住舊header——parseLog係靠index讀,舊row c[10]=undefined冇事,
+    // 但下次有人照header讀就會成條爭一欄。同calibration_log 4→5欄一模一樣嘅伏。
+    ["market_race_log.csv", 11, "market_race.js parseLog 硬編碼 c[9]=gamma c[10]=clob"],
   ];
   for (const [file, n, why] of expect) {
     if (!fs.existsSync(file)) { notes.push(`${file} 未存在`); continue; }

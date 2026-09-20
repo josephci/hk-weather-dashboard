@@ -330,10 +330,21 @@ function parseStamp(s, ch) {
 }
 
 // 市場顯著郁動嗰陣,各渠道知咗未
+// ⚠️2026-09-20實測(run 35488286451,874個樣本):
+//   gamma 解析度 中位 5.0分 (n=72)
+//   clob  解析度 中位 0.6分 (n=207)   ← 幼 4.5 分鐘
+// 即係話用gamma數出嚟嘅「市場幾時郁」,誤差本身就有5分鐘,
+// 而我哋想量嘅嘢(市場vs天文台)得幾分鐘咁大。用gamma量等於用米尺度頭髮。
+// 所以有clob就一定要用clob,gamma淨係做後備。
+function priceOf(row) { return row.clob ?? row.market; }
+function priceSrcName(rows) {
+  return rows.some((r) => r.clob) ? "clob(order book midpoint,0.6分解析度)" : "gamma(5分鐘解析度,唔夠幼)";
+}
+
 function analyseMoves(rows) {
   const moves = [];
   for (let i = 1; i < rows.length; i++) {
-    const a = rows[i - 1].market, b = rows[i].market;
+    const a = priceOf(rows[i - 1]), b = priceOf(rows[i]);
     if (!a || !b) continue;
     for (const k of Object.keys(b)) {
       if (a[k] === undefined) continue;
@@ -445,7 +456,7 @@ function analyse() {
   }
 
   const moves = analyseMoves(rows);
-  console.log(`\n② 市場顯著郁動(≥${MOVE_THRESHOLD}¢): ${moves.length}次`);
+  console.log(`\n② 市場顯著郁動(≥${MOVE_THRESHOLD}¢): ${moves.length}次 — 用緊 ${priceSrcName(rows)}`);
   if (!moves.length) { console.log("   (跑耐啲,或者揀高峰時段再跑)"); return; }
 
   // ②b 我哋睇到嘅市場,解析度有幾粗?呢個決定咗③信唔信得過。
@@ -476,19 +487,37 @@ function analyse() {
     if (gaps.length) cadence[ch] = gaps[Math.floor(gaps.length / 2)];
   }
   console.log("\n③ 市場 vs 各渠道:邊個行先?(正數=市場行先)");
+  // ⚠️兩把唔同嘅尺,兩個都要過先信得過:
+  //  · 細過「我哋個價feed嘅解析度」→ 睇唔到咁幼。但呢個唔係壞消息:
+  //    佢即係話「兩者差距細過X分鐘」,本身就係一個答案(≈同步)。
+  //  · 大過嗰條渠道出數間隔嘅1/3 → 嗰個數其實係佢自己cadence整出嚟。
+  //    rhrread一個鐘出一次,隨便一個move都預期「行先」~30分鐘,
+  //    2026-09-20之前個版本就係因為只check `mag >= cad`,
+  //    令「市場行先41分鐘(rhrread)」過咗關,仲用嚟做結論話「市場真係行先」。
+  const verdictOf = (ch, s) => {
+    const cad = cadence[ch], mag = Math.abs(s.median);
+    if (Number.isFinite(resMin) && mag < resMin) return { ok: false, sync: true, txt: `≈同步(差距細過${resMin.toFixed(1)}分,我哋分唔開——即係冇明顯行先)` };
+    if (cad && mag > cad / 3) return { ok: false, sync: false, txt: `⚠️分唔到(呢條渠道${cad.toFixed(0)}分鐘先出一次數,呢個差距係佢自己個cadence)` };
+    return { ok: true, sync: false, txt: s.median > 0 ? "市場行先" : "市場跟尾" };
+  };
   for (const [ch, s] of Object.entries(ll)) {
-    const cad = cadence[ch];
-    // 個「行先」細過嗰條渠道自己嘅出數間隔 = 分唔開,唔好當結論
-    const dominated = cad && Math.abs(s.median) < cad;
-    const dir = dominated ? `⚠️分唔到(呢條渠道${cad.toFixed(0)}分鐘先出一次數)`
-      : s.median > 0.5 ? "市場行先" : s.median < -0.5 ? "市場跟尾" : "同步";
-    console.log(`   ${names[ch]} 中位 ${s.median > 0 ? "+" : ""}${s.median.toFixed(1)}分鐘 → ${dir}` +
+    console.log(`   ${names[ch]} 中位 ${s.median > 0 ? "+" : ""}${s.median.toFixed(1)}分鐘 → ${verdictOf(ch, s).txt}` +
       `  (${s.led}/${s.total}次市場行先)`);
   }
-  // 落結論淨係計「自己cadence夠幼、分得開」嗰啲
-  const usable = Object.entries(ll).filter(([ch, s]) => !cadence[ch] || Math.abs(s.median) >= cadence[ch] || cadence[ch] <= 12);
+  const syncCh = Object.entries(ll).filter(([ch, s]) => verdictOf(ch, s).sync);
+  const usable = Object.entries(ll).filter(([ch, s]) => verdictOf(ch, s).ok);
   const sorted = usable.sort((a, b) => a[1].median - b[1].median);
-  if (sorted.length) {
+  // ⚠️2026-09-20:usable可以係空(全部渠道唔係「分唔開」就係「cadence主導」)。
+  // 舊版靠 sorted.length 入閘,空咗就乜都唔print——跑足5個鐘,最後一句結論都冇。
+  // 而「全部都≈同步」本身就係一個答案,唔係冇答案。
+  if (!sorted.length && syncCh.length) {
+    console.log(`\n💡 結論:`);
+    console.log(`   喺 ${resMin.toFixed(1)} 分鐘嘅解析度之下,以下渠道同市場**分唔開先後**:`);
+    for (const [ch, s] of syncCh) console.log(`     ${names[ch].trim()}(中位 ${s.median > 0 ? "+" : ""}${s.median.toFixed(1)}分)`);
+    console.log(`   → 即係話市場**冇明顯行先**呢啲渠道。你之前覺得「市場早一步」,`);
+    console.log(`     好可能係我哋自己個價feed遲(gamma 5分鐘一格)整出嚟嘅錯覺。`);
+    console.log(`   ⚠️但「分唔開」唔等於「一定同步」——只係差距細過 ${resMin.toFixed(1)} 分鐘。`);
+  } else if (sorted.length) {
     const [followCh, f] = sorted[0];
     console.log(`\n💡 結論:`);
     // ⚠️2026-09-19:個結論一定要跟返②b個解析度。之前會寫

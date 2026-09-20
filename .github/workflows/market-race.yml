@@ -36,9 +36,24 @@ jobs:
 
       - name: Commit log
         if: ${{ inputs.commit_log }}
+        # ⚠️2026-09-20:本來係 `git pull --rebase origin main && git push`。
+        # 跑咗5個鐘、收齊533行clob數據,最後喺呢一步死咗,全部資料冇晒:
+        #   ! [rejected] claude/github-optimization-uk-tab-m5h4ld (fetch first)
+        # 兩個錯:
+        #  ① rebase去**main**,但checkout出嚟嘅係feature branch——夾硬撈埋main
+        #     啲commit入嚟,根本唔係想要嘅嘢
+        #  ② 個job跑緊嗰5個鐘,我喺條branch度push咗新commit,所以remote行先咗
+        # 改成rebase返自己條branch,而且push唔到就再試一次(5個鐘唔可以就咁冇咗)。
         run: |
+          BR="${GITHUB_REF_NAME}"
           git config user.name "weather-bot"
           git config user.email "actions@github.com"
           git add market_race_log.csv 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "chore: market race log [skip ci]"
-          git pull --rebase origin main && git push
+          git diff --staged --quiet && { echo "冇新數據,唔使commit"; exit 0; }
+          git commit -m "chore: market race log [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && exit 0
+            echo "push唔到,第 $i 次重試…"; sleep $((i * 5))
+          done
+          echo "::error::3次都push唔到 $BR——啲數據仲喺runner度,睇返上面個分析先好收工"
+          exit 1

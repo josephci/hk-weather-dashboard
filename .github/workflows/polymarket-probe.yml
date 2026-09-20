@@ -1,0 +1,32 @@
+name: Polymarket 探測
+
+# 一分鐘跑完,答「gamma同clob而家實際回乜」。
+#
+# ⚠️點解要有呢個workflow:呢個開發sandbox個proxy封死 polymarket.com(403),
+# 所以我改得到code但驗證唔到。之前唯一驗證途徑係 market-race,
+# 但嗰個一開就跑幾個鐘,而且 concurrency group 鎖住,跑緊就插唔到隊
+# ——即係想試一個400 error都要等幾個鐘。呢個係獨立group,即開即有結果。
+#
+# ⚠️唔會改任何檔案、唔會send通知——純讀同print。
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polymarket-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 探測 gamma + clob
+        run: node probe_polymarket.js

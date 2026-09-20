@@ -147,6 +147,68 @@ function dumpBuckets(ev) {
   }
 }
 
+// ---------- ⑤ CLOB真價 ----------
+// ⚠️2026-09-19實測:market_race個batch POST /midpoints 回 HTTP 400(11隻token)。
+// 但嗰陣個市場啱啱resolve咗,所以分唔到係「body shape錯」定「冇order book」。
+// 呢度逐樣試,印晒status同body,一次過分清楚。
+//
+// 點解要搞CLOB:09-07個log數返,gamma個價**量化到4.9分鐘**
+// (33次變動,間隔全部4.7–5.5分,冇一次喺中間)。即係市場就算同我哋
+// 同一秒知,我哋都要遲5分鐘先見到佢郁——「市場早一步」有一大截係咁嚟嘅。
+// gamma係metadata/aggregation,真價喺CLOB order book。
+async function probeClob(ev) {
+  console.log(`\n⑤ CLOB真價(order book midpoint)`);
+  line();
+  const toks = [];
+  for (const mkt of ev.markets || []) {
+    const label = (mkt.groupItemTitle || mkt.question || "").trim();
+    try {
+      const ids = JSON.parse(mkt.clobTokenIds || "[]");
+      if (ids[0] && label) toks.push([label, String(ids[0])]);
+    } catch { /* ignore */ }
+  }
+  if (!toks.length) {
+    console.log("  ⚠️ 一隻clobTokenIds都攞唔到——gamma個market object冇呢個欄?");
+    console.log(`     (markets有${(ev.markets || []).length}個,第一個嘅欄:${Object.keys(ev.markets?.[0] || {}).join(",").slice(0, 200)})`);
+    return;
+  }
+  console.log(`  攞到 ${toks.length} 隻token id,第一隻: ${toks[0][1].slice(0, 20)}…`);
+
+  // (a) batch POST,兩種body shape都試
+  for (const [name, body] of [
+    ["{params:[{token_id}]}", { params: toks.map(([, id]) => ({ token_id: id })) }],
+    ["[{token_id}] 裸array", toks.map(([, id]) => ({ token_id: id }))],
+  ]) {
+    try {
+      const r = await fetch("https://clob.polymarket.com/midpoints", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        cache: "no-store", body: JSON.stringify(body),
+      });
+      const txt = (await r.text()).slice(0, 300);
+      console.log(`  POST /midpoints ${name.padEnd(24)} → ${r.status}  ${txt}`);
+    } catch (e) { console.log(`  POST /midpoints ${name.padEnd(24)} → 掛咗: ${e.message}`); }
+  }
+
+  // (b) 逐隻GET。分得開「全部同一個死法」(shape/權限問題)同「通但冇book」(市場結咗)
+  console.log("  逐隻 GET /midpoint?token_id= :");
+  let ok = 0;
+  for (const [label, id] of toks) {
+    try {
+      const r = await fetch(`https://clob.polymarket.com/midpoint?token_id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      const txt = (await r.text()).slice(0, 120);
+      if (r.ok) ok++;
+      console.log(`    ${label.padEnd(20)} ${r.status}  ${txt}`);
+    } catch (e) { console.log(`    ${label.padEnd(20)} 掛咗: ${e.message}`); }
+  }
+  console.log(`  → ${ok}/${toks.length} 隻攞到價`);
+  if (!ok) {
+    console.log("  ⚠️ 一隻都攞唔到。睇上面個body同status:");
+    console.log("     404/唔見 = token id唔啱(gamma個clobTokenIds可能要另一個index)");
+    console.log("     200但冇mid = 市場結咗/冇order book,揀個未結嘅日子再試");
+    console.log("     401/403   = 要API key,咁就要諗下抵唔抵");
+  }
+}
+
 async function main() {
   console.log("═".repeat(60));
   console.log("Polymarket 探測報告");
@@ -164,7 +226,7 @@ async function main() {
   const hk = await scanWeatherTag();
 
   const ev = today || tmr || hk[0] || null;
-  if (ev) dumpBuckets(ev);
+  if (ev) { dumpBuckets(ev); await probeClob(ev); }
   else console.log("\n④ 冇event可以拆——上面②③已經講咗死喺邊");
 
   console.log("\n" + "═".repeat(60));

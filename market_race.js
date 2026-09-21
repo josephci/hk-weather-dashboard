@@ -155,32 +155,43 @@ let clobError = null;
 async function fetchClobMids(tokens) {
   const entries = Object.entries(tokens || {});
   if (!entries.length) return null;
-  // ⚠️2026-09-19 22:31實測:batch回 HTTP 400(11隻token)。
-  // 但淨係印個400分唔到係:(a)個body shape錯 (b)市場已經結咗冇order book。
-  // 嗰晚個市場啱啱resolve咗(100→0 / 0→100),兩個都講得通。
-  // CLAUDE.md:分唔清死因嘅log本身就係bug → 所以要印個response body,
-  // 而且batch死咗要逐隻token試返,睇係「全部死」定「淨係某幾隻死」。
+  // ⚠️2026-09-21 probe實測(run 35559757381),同一刻同一批token:
+  //     POST /midpoints  {params:[{token_id}]}  → 400 {"error":"Invalid payload"}
+  //     POST /midpoints  [{token_id}] 裸array   → 200 全部有價
+  //   即係**個body shape一直都係錯**,要裸array。
+  //
+  // ⚠️訂正:09-19見到400,我寫低「係市場resolve咗冇order book,唔係shape錯」。
+  // **啱啱相反。**嗰晚個市場的確啱啱結咗,兩個解釋同時講得通,
+  // 而我揀咗其中一個就收工,冇試第二個shape——典型「搵到一個解釋就當查完」。
+  // 09-20跑5個鐘攞到clob數據,唔係因為batch通咗,係**跌咗落逐隻GET**
+  // (一個poll 11個request)。嗰組0.6分解析度嘅數係真嘅,但一直行緊慢嗰條路。
   let batchErr = null;
-  try {
-    const res = await fetch("https://clob.polymarket.com/midpoints", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ params: entries.map(([, id]) => ({ token_id: id })) }),
-    });
-    if (!res.ok) {
-      const body = (await res.text().catch(() => "")).slice(0, 200);
-      throw new Error(`HTTP ${res.status} body=${JSON.stringify(body)}`);
-    }
-    const j = await res.json();
-    const out = {};
-    for (const [label, id] of entries) {
-      const v = j?.[id];
-      if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
-    }
-    if (Object.keys(out).length) return out;
-    batchErr = `回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`;
-  } catch (e) { batchErr = e.message; }
+  for (const [shape, body] of [
+    ["裸array", entries.map(([, id]) => ({ token_id: id }))],
+    ["{params}", { params: entries.map(([, id]) => ({ token_id: id })) }],
+  ]) {
+    try {
+      const res = await fetch("https://clob.polymarket.com/midpoints", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const txt = (await res.text().catch(() => "")).slice(0, 200);
+        batchErr = `${shape} HTTP ${res.status} body=${JSON.stringify(txt)}`;
+        continue;
+      }
+      const j = await res.json();
+      const out = {};
+      for (const [label, id] of entries) {
+        const v = j?.[id];
+        if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
+      }
+      if (Object.keys(out).length) return out;
+      batchErr = `${shape} 回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`;
+    } catch (e) { batchErr = `${shape} ${e.message}`; }
+  }
 
   // 逐隻試:分得開「個endpoint用錯shape」(全部同一個死法)
   // 同「呢個市場冇book」(通,但冇價)
@@ -344,6 +355,11 @@ function priceSrcName(rows) {
 function analyseMoves(rows) {
   const moves = [];
   for (let i = 1; i < rows.length; i++) {
+    // ⚠️2026-09-21:個log跨好多日(每次run append落同一個檔)。
+    // 唔隔走session邊界,就會攞「09-20收工嗰格」同「09-21開工嗰格」比,
+    // 砌出一個假嘅100→0郁動——而佢仲會排上④「最大幾次郁動」榜首,
+    // 睇落似市場崩過盤。隔咗60分鐘以上一律當兩個session,唔比。
+    if (rows[i].at - rows[i - 1].at > 60 * 60000) continue;
     const a = priceOf(rows[i - 1]), b = priceOf(rows[i]);
     if (!a || !b) continue;
     for (const k of Object.keys(b)) {
@@ -487,15 +503,22 @@ function analyse() {
     if (gaps.length) cadence[ch] = gaps[Math.floor(gaps.length / 2)];
   }
   console.log("\n③ 市場 vs 各渠道:邊個行先?(正數=市場行先)");
-  // ⚠️兩把唔同嘅尺,兩個都要過先信得過:
-  //  · 細過「我哋個價feed嘅解析度」→ 睇唔到咁幼。但呢個唔係壞消息:
-  //    佢即係話「兩者差距細過X分鐘」,本身就係一個答案(≈同步)。
-  //  · 大過嗰條渠道出數間隔嘅1/3 → 嗰個數其實係佢自己cadence整出嚟。
-  //    rhrread一個鐘出一次,隨便一個move都預期「行先」~30分鐘,
-  //    2026-09-20之前個版本就係因為只check `mag >= cad`,
-  //    令「市場行先41分鐘(rhrread)」過咗關,仲用嚟做結論話「市場真係行先」。
+  // ⚠️2026-09-21:換咗clob(0.6分解析度)之後,一個下晝有200次≥3¢嘅郁動,
+  // 即係平均每1.5分鐘一次——**order book本身喺度跳,唔係資訊事件**。
+  // leadLag嘅做法係「揀時間上最接近嗰個渠道更新點」。市場郁得夠密嘅時候,
+  // 「最接近」純粹係幾何:任何一個渠道更新點附近都一定有個move,
+  // 個中位數就會被扯向0(CSV)或者一個同cadence有關嘅細數(rhrread/METAR)。
+  // 換句話講:**呢個統計喺高頻之下量緊幾何,唔係量緊因果。**
+  // gamma嗰陣冇露餡,係因為佢5分鐘先出一個價,意外咁過濾走咗雜訊。
+  const moveGaps = moves.slice(1).map((m, i) => (m.at - moves[i].at) / 60000)
+    .filter((g) => g > 0 && g <= 60).sort((a, b) => a - b);
+  const medMoveGap = moveGaps.length ? moveGaps[Math.floor(moveGaps.length / 2)] : Infinity;
+  console.log(`   (市場平均 ${medMoveGap === Infinity ? "?" : medMoveGap.toFixed(1)} 分鐘郁一次)`);
   const verdictOf = (ch, s) => {
     const cad = cadence[ch], mag = Math.abs(s.median);
+    if (cad && medMoveGap < cad) {
+      return { ok: false, sync: false, txt: `⚠️分唔到(市場${medMoveGap.toFixed(1)}分鐘郁一次,呢條渠道${cad.toFixed(0)}分鐘先出一次——「最近一次更新」係幾何,唔係因果)` };
+    }
     if (Number.isFinite(resMin) && mag < resMin) return { ok: false, sync: true, txt: `≈同步(差距細過${resMin.toFixed(1)}分,我哋分唔開——即係冇明顯行先)` };
     if (cad && mag > cad / 3) return { ok: false, sync: false, txt: `⚠️分唔到(呢條渠道${cad.toFixed(0)}分鐘先出一次數,呢個差距係佢自己個cadence)` };
     return { ok: true, sync: false, txt: s.median > 0 ? "市場行先" : "市場跟尾" };
@@ -507,10 +530,25 @@ function analyse() {
   const syncCh = Object.entries(ll).filter(([ch, s]) => verdictOf(ch, s).sync);
   const usable = Object.entries(ll).filter(([ch, s]) => verdictOf(ch, s).ok);
   const sorted = usable.sort((a, b) => a[1].median - b[1].median);
-  // ⚠️2026-09-20:usable可以係空(全部渠道唔係「分唔開」就係「cadence主導」)。
-  // 舊版靠 sorted.length 入閘,空咗就乜都唔print——跑足5個鐘,最後一句結論都冇。
-  // 而「全部都≈同步」本身就係一個答案,唔係冇答案。
-  if (!sorted.length && syncCh.length) {
+  // ⚠️2026-09-21:個結論一定要由**結算源**(HKO 1分鐘CSV)話事。
+  // 之前出過:CSV嗰行寫「≈同步」,而結論寫「所有公開渠道都喺市場之後
+  // 先更新 → 市場真係行先」——因為≈同步嗰啲被剔出usable,
+  // 個結論就淨係睇剩返嗰啲cadence污染嘅渠道。
+  // 香港係跟HKO總部結算嘅。CSV講咩就係咩,其餘三條快唔快都唔結算。
+  const csvV = ll.csv ? verdictOf("csv", ll.csv) : null;
+  if (csvV && !csvV.ok) {
+    console.log(`\n💡 結論:`);
+    console.log(`   **結算源(HKO 1分鐘CSV)**:${csvV.txt}`);
+    if (csvV.sync) {
+      console.log(`   → 喺 ${resMin.toFixed(1)} 分鐘解析度之下,市場同結算源**分唔開先後**,即係冇明顯行先。`);
+    } else {
+      console.log(`   → 呢次量唔到市場對結算源嘅快慢。要量,就要淨係計大郁動(資訊事件),`);
+      console.log(`     唔係計order book日常跳動。`);
+    }
+    const others = Object.entries(ll).filter(([ch]) => ch !== "csv").map(([ch, s]) => `${names[ch].trim()} ${s.median > 0 ? "+" : ""}${s.median.toFixed(1)}分`);
+    console.log(`   ⚠️其餘渠道(${others.join(" / ")})唔好攞嚟落結論——`);
+    console.log(`     佢哋唔係結算源,而且個數受自己個cadence同市場郁動密度污染。`);
+  } else if (!sorted.length && syncCh.length) {
     console.log(`\n💡 結論:`);
     console.log(`   喺 ${resMin.toFixed(1)} 分鐘嘅解析度之下,以下渠道同市場**分唔開先後**:`);
     for (const [ch, s] of syncCh) console.log(`     ${names[ch].trim()}(中位 ${s.median > 0 ? "+" : ""}${s.median.toFixed(1)}分)`);
@@ -553,6 +591,54 @@ function analyse() {
     const r = rows[mv.idx];
     console.log(`   ${new Date(mv.at).toISOString().slice(11,16)}Z ${mv.bucket}: ${mv.from}→${mv.to}¢ (${mv.delta > 0 ? "+" : ""}${mv.delta})` +
       ` | 當時 csv ${r.csv.val}° rhr ${r.rhr.val}° metar ${r.metar.val}°`);
+  }
+
+  bigMoveTiming(rows, moves);
+}
+
+// ⑤ ③量唔到,因為order book成日喺度跳(0.8分鐘一次),
+// 「最近一次渠道更新」純粹係幾何。要問因果,就要淨係睇**資訊事件**:
+// 大郁動。而且唔好問「最近一個更新係幾時」,要問
+// **「距離上一次CSV出街幾耐」**——CSV 10分鐘一格,
+// 如果市場係跟住CSV郁,大郁動就會擠喺出街之後嗰1-2分鐘。
+function bigMoveTiming(rows, moves) {
+  console.log("\n⑤ 大郁動 vs CSV出街時刻(呢個先答到「市場係咪行先結算源」)");
+  // CSV每個戳第一次見到 = 出街時刻
+  const arr = [];
+  const seen = new Set();
+  for (const r of rows) {
+    const s = r.csv?.stamp;
+    if (s && !seen.has(s)) { seen.add(s); arr.push(r.at); }
+  }
+  if (arr.length < 5) { console.log("   CSV到貨次數唔夠,跑耐啲"); return; }
+  // 出街間隔:用嚟計「隨機分佈嘅話,頭2分鐘應該佔幾多」
+  const gaps = arr.slice(1).map((t, i) => (t - arr[i]) / 60000).filter((g) => g > 0 && g <= 60);
+  const medGap = gaps.length ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 10;
+  const expect = Math.min(1, 2 / medGap);
+
+  for (const TH of [10, 20]) {
+    const big = moves.filter((m) => Math.abs(m.delta) >= TH);
+    const since = big.map((m) => {
+      let prev = null;
+      for (const t of arr) if (t <= m.at) prev = t; else break;
+      return prev === null ? NaN : (m.at - prev) / 60000;
+    }).filter((x) => Number.isFinite(x) && x <= 60).sort((a, b) => a - b);
+    if (!since.length) { console.log(`   ≥${TH}¢: 0次`); continue; }
+    const med = since[Math.floor(since.length / 2)];
+    const within2 = since.filter((s) => s <= 2).length;
+    const pct = 100 * within2 / since.length;
+    console.log(`   ≥${TH}¢: ${since.length}次 · 距上次CSV出街 中位 ${med.toFixed(1)}分 · ` +
+      `出街後2分鐘內就郁 ${within2}/${since.length} (${pct.toFixed(0)}%,隨機應該約${(100 * expect).toFixed(0)}%)`);
+    // ⚠️唔好見到一個方向就落結論。二項分佈之下,n細嘅時候乜都似有pattern。
+    if (since.length < 30) {
+      console.log(`      ⚠️n=${since.length},太細,唔好落結論。要儲幾日先講。`);
+    } else if (pct > 100 * expect * 1.5) {
+      console.log(`      → 大郁動擠喺CSV出街之後 = 市場**跟住結算源**郁,冇行先。`);
+    } else if (pct < 100 * expect * 0.5) {
+      console.log(`      → 大郁動避開CSV出街之後,反而擠喺出街**之前** = 市場有第二條資訊源。查落去。`);
+    } else {
+      console.log(`      → 同隨機分唔開,量唔到關係。`);
+    }
   }
 }
 

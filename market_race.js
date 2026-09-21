@@ -155,32 +155,43 @@ let clobError = null;
 async function fetchClobMids(tokens) {
   const entries = Object.entries(tokens || {});
   if (!entries.length) return null;
-  // ⚠️2026-09-19 22:31實測:batch回 HTTP 400(11隻token)。
-  // 但淨係印個400分唔到係:(a)個body shape錯 (b)市場已經結咗冇order book。
-  // 嗰晚個市場啱啱resolve咗(100→0 / 0→100),兩個都講得通。
-  // CLAUDE.md:分唔清死因嘅log本身就係bug → 所以要印個response body,
-  // 而且batch死咗要逐隻token試返,睇係「全部死」定「淨係某幾隻死」。
+  // ⚠️2026-09-21 probe實測(run 35559757381),同一刻同一批token:
+  //     POST /midpoints  {params:[{token_id}]}  → 400 {"error":"Invalid payload"}
+  //     POST /midpoints  [{token_id}] 裸array   → 200 全部有價
+  //   即係**個body shape一直都係錯**,要裸array。
+  //
+  // ⚠️訂正:09-19見到400,我寫低「係市場resolve咗冇order book,唔係shape錯」。
+  // **啱啱相反。**嗰晚個市場的確啱啱結咗,兩個解釋同時講得通,
+  // 而我揀咗其中一個就收工,冇試第二個shape——典型「搵到一個解釋就當查完」。
+  // 09-20跑5個鐘攞到clob數據,唔係因為batch通咗,係**跌咗落逐隻GET**
+  // (一個poll 11個request)。嗰組0.6分解析度嘅數係真嘅,但一直行緊慢嗰條路。
   let batchErr = null;
-  try {
-    const res = await fetch("https://clob.polymarket.com/midpoints", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ params: entries.map(([, id]) => ({ token_id: id })) }),
-    });
-    if (!res.ok) {
-      const body = (await res.text().catch(() => "")).slice(0, 200);
-      throw new Error(`HTTP ${res.status} body=${JSON.stringify(body)}`);
-    }
-    const j = await res.json();
-    const out = {};
-    for (const [label, id] of entries) {
-      const v = j?.[id];
-      if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
-    }
-    if (Object.keys(out).length) return out;
-    batchErr = `回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`;
-  } catch (e) { batchErr = e.message; }
+  for (const [shape, body] of [
+    ["裸array", entries.map(([, id]) => ({ token_id: id }))],
+    ["{params}", { params: entries.map(([, id]) => ({ token_id: id })) }],
+  ]) {
+    try {
+      const res = await fetch("https://clob.polymarket.com/midpoints", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const txt = (await res.text().catch(() => "")).slice(0, 200);
+        batchErr = `${shape} HTTP ${res.status} body=${JSON.stringify(txt)}`;
+        continue;
+      }
+      const j = await res.json();
+      const out = {};
+      for (const [label, id] of entries) {
+        const v = j?.[id];
+        if (v !== undefined) out[label] = Math.round(parseFloat(v) * 100);
+      }
+      if (Object.keys(out).length) return out;
+      batchErr = `${shape} 回咗${Object.keys(j || {}).length}個key,一個都對唔上我哋${entries.length}隻token id`;
+    } catch (e) { batchErr = `${shape} ${e.message}`; }
+  }
 
   // 逐隻試:分得開「個endpoint用錯shape」(全部同一個死法)
   // 同「呢個市場冇book」(通,但冇價)

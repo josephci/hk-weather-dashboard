@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T15:07:19.341Z",
+  "generatedAt": "2026-09-25T17:06:26.986Z",
   "sampleDays": 106,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
@@ -16,32 +16,32 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 66,
+      "sampleDays": 67,
       "max": {
         "gfs_seamless": 1.5,
         "ecmwf_ifs025": 0.7,
-        "icon_seamless": 1.3,
-        "ukmo_seamless": 0.85,
-        "gem_seamless": 1.27,
-        "jma_seamless": 2.11
+        "icon_seamless": 1.31,
+        "ukmo_seamless": 0.86,
+        "gem_seamless": 1.28,
+        "jma_seamless": 2.12
       },
       "sigmaScale": 1.28,
       "sigmaAbs": 0.75,
       "sigmaWeight": 0.33
     },
     "beijing": {
-      "sampleDays": 65,
+      "sampleDays": 66,
       "max": {
-        "gfs_seamless": -0.14,
-        "ecmwf_ifs025": 0.82,
-        "icon_seamless": 1.42,
-        "ukmo_seamless": 0.71,
-        "gem_seamless": -0.06,
-        "jma_seamless": 0.42
+        "gfs_seamless": -0.16,
+        "ecmwf_ifs025": 0.83,
+        "icon_seamless": 1.43,
+        "ukmo_seamless": 0.73,
+        "gem_seamless": -0.09,
+        "jma_seamless": 0.44
       },
       "sigmaScale": 1.28,
-      "sigmaAbs": 0.97,
-      "sigmaWeight": 0.07
+      "sigmaAbs": 0.96,
+      "sigmaWeight": 0.05
     },
     "london": {
       "sampleDays": 69,
@@ -72,17 +72,17 @@
       "sigmaWeight": 0.26
     },
     "shenzhen": {
-      "sampleDays": 52,
+      "sampleDays": 53,
       "max": {
-        "gfs_seamless": -1.58,
-        "ecmwf_ifs025": 0.63,
-        "icon_seamless": 0.36,
+        "gfs_seamless": -1.57,
+        "ecmwf_ifs025": 0.62,
+        "icon_seamless": 0.34,
         "ukmo_seamless": -0.86,
-        "gem_seamless": 0.07,
-        "jma_seamless": 0.99
+        "gem_seamless": 0.06,
+        "jma_seamless": 1
       },
       "sigmaScale": 1.66,
-      "sigmaAbs": 0.99,
+      "sigmaAbs": 0.98,
       "sigmaWeight": 0
     }
   }

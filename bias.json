@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-30T15:45:37.630Z",
+  "generatedAt": "2026-09-30T16:21:52.380Z",
   "sampleDays": 110,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
@@ -16,31 +16,31 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 71,
+      "sampleDays": 72,
       "max": {
-        "gfs_seamless": 1.45,
-        "ecmwf_ifs025": 0.7,
-        "icon_seamless": 1.28,
-        "ukmo_seamless": 0.83,
-        "gem_seamless": 1.27,
-        "jma_seamless": 2.07
+        "gfs_seamless": 1.43,
+        "ecmwf_ifs025": 0.67,
+        "icon_seamless": 1.25,
+        "ukmo_seamless": 0.8,
+        "gem_seamless": 1.23,
+        "jma_seamless": 2.02
       },
-      "sigmaScale": 1.25,
-      "sigmaAbs": 0.74,
-      "sigmaWeight": 0.24
+      "sigmaScale": 1.32,
+      "sigmaAbs": 0.78,
+      "sigmaWeight": 0.21
     },
     "beijing": {
-      "sampleDays": 70,
+      "sampleDays": 71,
       "max": {
-        "gfs_seamless": -0.19,
-        "ecmwf_ifs025": 0.85,
-        "icon_seamless": 1.37,
-        "ukmo_seamless": 0.76,
-        "gem_seamless": -0.05,
-        "jma_seamless": 0.42
+        "gfs_seamless": -0.2,
+        "ecmwf_ifs025": 0.84,
+        "icon_seamless": 1.36,
+        "ukmo_seamless": 0.75,
+        "gem_seamless": -0.04,
+        "jma_seamless": 0.41
       },
-      "sigmaScale": 1.26,
-      "sigmaAbs": 0.94,
+      "sigmaScale": 1.25,
+      "sigmaAbs": 0.93,
       "sigmaWeight": 0.04
     },
     "london": {
@@ -72,14 +72,14 @@
       "sigmaWeight": 0.3
     },
     "shenzhen": {
-      "sampleDays": 57,
+      "sampleDays": 58,
       "max": {
-        "gfs_seamless": -1.61,
-        "ecmwf_ifs025": 0.54,
-        "icon_seamless": 0.36,
-        "ukmo_seamless": -0.88,
-        "gem_seamless": -0.06,
-        "jma_seamless": 1.01
+        "gfs_seamless": -1.62,
+        "ecmwf_ifs025": 0.52,
+        "icon_seamless": 0.37,
+        "ukmo_seamless": -0.9,
+        "gem_seamless": -0.08,
+        "jma_seamless": 1.02
       },
       "sigmaScale": 1.65,
       "sigmaAbs": 0.95,

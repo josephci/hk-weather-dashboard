@@ -1,19 +1,11 @@
 {
-  "date": "2026-10-02",
-  "prevCurrent": 28,
-  "prevMax": 31.7,
-  "alertedFloors": [
-    31
-  ],
-  "approachAlerted": 30,
-  "pulledBackAlerted": true,
-  "lastWarnCodes": "WTS",
-  "edgeAlerted": {
-    "26°C": -10,
-    "27°C": -41,
-    "28°C": -52,
-    "31°C": 84,
-    "32°C or higher": 16
-  },
+  "date": "2026-10-03",
+  "prevCurrent": 26,
+  "prevMax": 27.9,
+  "alertedFloors": [],
+  "approachAlerted": null,
+  "pulledBackAlerted": false,
+  "lastWarnCodes": "WRAIN,WTS",
+  "edgeAlerted": {},
   "fastAlerted": []
 }

@@ -356,3 +356,4 @@ openedAt,date,city,bucket,side,signal,marketPrice,fillPrice,stake,realizedMax,re
 2026-10-07T20:38:15.061Z,2026-10-08,shanghai,26°C,NO,MODEL_NO,70,72,10,,,
 2026-10-07T20:38:15.354Z,2026-10-08,beijing,25°C,YES,MODEL_YES,12,14,10,,,
 2026-10-07T20:38:15.354Z,2026-10-08,beijing,27°C,NO,MODEL_NO,60,62,10,,,
+2026-10-08T14:41:03.605Z,2026-10-08,london,15°C,NO,MODEL_NO,3,5,10,,,

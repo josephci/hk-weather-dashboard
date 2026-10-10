@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T15:49:46.791Z",
+  "generatedAt": "2026-10-10T17:19:26.821Z",
   "sampleDays": 116,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
@@ -16,32 +16,32 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 81,
+      "sampleDays": 82,
       "max": {
-        "gfs_seamless": 1.48,
-        "ecmwf_ifs025": 0.71,
-        "icon_seamless": 1.27,
-        "ukmo_seamless": 0.82,
+        "gfs_seamless": 1.5,
+        "ecmwf_ifs025": 0.73,
+        "icon_seamless": 1.29,
+        "ukmo_seamless": 0.85,
         "gem_seamless": 1.12,
-        "jma_seamless": 1.91
+        "jma_seamless": 1.93
       },
-      "sigmaScale": 1.3,
-      "sigmaAbs": 0.78,
+      "sigmaScale": 1.32,
+      "sigmaAbs": 0.79,
       "sigmaWeight": 0.19
     },
     "beijing": {
-      "sampleDays": 80,
+      "sampleDays": 81,
       "max": {
-        "gfs_seamless": -0.17,
+        "gfs_seamless": -0.18,
         "ecmwf_ifs025": 0.87,
-        "icon_seamless": 1.33,
-        "ukmo_seamless": 0.82,
+        "icon_seamless": 1.32,
+        "ukmo_seamless": 0.83,
         "gem_seamless": -0.09,
-        "jma_seamless": 0.36
+        "jma_seamless": 0.37
       },
-      "sigmaScale": 1.22,
+      "sigmaScale": 1.21,
       "sigmaAbs": 0.89,
-      "sigmaWeight": 0.06
+      "sigmaWeight": 0.07
     },
     "london": {
       "sampleDays": 84,
@@ -72,17 +72,17 @@
       "sigmaWeight": 0.36
     },
     "shenzhen": {
-      "sampleDays": 67,
+      "sampleDays": 68,
       "max": {
-        "gfs_seamless": -1.5,
-        "ecmwf_ifs025": 0.5,
-        "icon_seamless": 0.45,
-        "ukmo_seamless": -0.75,
+        "gfs_seamless": -1.49,
+        "ecmwf_ifs025": 0.49,
+        "icon_seamless": 0.46,
+        "ukmo_seamless": -0.72,
         "gem_seamless": -0.09,
-        "jma_seamless": 1.05
+        "jma_seamless": 1.06
       },
-      "sigmaScale": 1.58,
-      "sigmaAbs": 0.93,
+      "sigmaScale": 1.57,
+      "sigmaAbs": 0.92,
       "sigmaWeight": 0
     }
   }

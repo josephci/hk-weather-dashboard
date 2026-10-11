@@ -233,10 +233,26 @@ omDelta=null、靜靜哋跌返用絕對值、panel照出數,即係呢個bug原�
 一次都冇攞過 CLOB 個價。即係:市場就算同我哋同一秒知,
 我哋都要遲5分鐘先見到佢郁 → 睇落梗係「市場早一步」。
 
-CLOB 攞價嘅方法(實測通):`POST https://clob.polymarket.com/midpoints`,
-body `{params:[{token_id}]}`,token id 由 gamma 個 `market.clobTokenIds[0]` 攞。
-⚠️09-19晚試過回 HTTP 400——嗰陣個市場啱啱resolve咗,**市場結咗就冇order book**。
-唔係shape錯。所以要試就要揀未結嘅時段。
+CLOB 攞價嘅方法(2026-09-21 probe實測,run 35559757381):
+```
+POST https://clob.polymarket.com/midpoints
+  body [{token_id},…]  裸array   → 200 全部有價   ⭐啱嘅
+  body {params:[…]}              → 400 {"error":"Invalid payload"}
+GET  https://clob.polymarket.com/midpoint?token_id=…  → 200 {"mid":"0.53"}
+```
+token id 由 gamma 個 `market.clobTokenIds[0]` 攞。
+
+### ⚠️2026-09-21訂正:09-19嗰個400係我shape寫錯,唔係「市場結咗」
+
+09-19見到400,我寫低「嗰陣個市場啱啱resolve咗,市場結咗就冇order book,唔係shape錯」。
+**啱啱相反。**嗰晚個市場的確係啱啱結咗——兩個解釋同時講得通,
+而我揀咗其中一個信咗就收工,冇試第二個body shape。
+**「搵到一個講得通嘅解釋」唔等於「查到個死因」。** 呢個伏同「某源快」嗰批
+一模一樣:見到一個對得上嘅故事就停。要排除,唔係要解釋。
+
+順帶一個重要後果:09-20跑5個鐘攞到clob數據,**唔係因為batch通咗**,
+係因為我寫咗個fallback,跌咗落逐隻GET(一個poll 11個request)。
+即係嗰組「clob 0.6分解析度」嘅數係真嘅,但條路一直行緊慢嗰條。
 
 ### 換咗把幼尺之後,個結論反轉
 

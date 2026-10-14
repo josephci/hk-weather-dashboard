@@ -1,12 +1,10 @@
 {
-  "date": "2026-10-14",
-  "prevCurrent": 27.6,
-  "prevMax": 30,
-  "alertedFloors": [
-    30
-  ],
-  "approachAlerted": 28,
-  "pulledBackAlerted": true,
+  "date": "2026-10-15",
+  "prevCurrent": 27.2,
+  "prevMax": 27.3,
+  "alertedFloors": [],
+  "approachAlerted": null,
+  "pulledBackAlerted": false,
   "lastWarnCodes": "",
   "edgeAlerted": {},
   "fastAlerted": []

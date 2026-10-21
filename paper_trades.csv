@@ -487,3 +487,4 @@ openedAt,date,city,bucket,side,signal,marketPrice,fillPrice,stake,realizedMax,re
 2026-10-20T19:17:55.110Z,2026-10-21,shenzhen,33°C,YES,MODEL_YES,26,28,10,,,
 2026-10-20T19:17:55.110Z,2026-10-21,shenzhen,34°C,NO,MODEL_NO,53,55,10,,,
 2026-10-20T19:17:55.110Z,2026-10-21,shenzhen,35°C,NO,MODEL_NO,80,82,10,,,
+2026-10-21T13:00:49.260Z,2026-10-21,shenzhen,36°C,NO,MODEL_NO,15,17,10,,,

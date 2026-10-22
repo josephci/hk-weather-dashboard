@@ -1,16 +1,16 @@
 {
-  "generatedAt": "2026-10-21T17:06:45.507Z",
-  "sampleDays": 126,
+  "generatedAt": "2026-10-22T14:25:58.317Z",
+  "sampleDays": 127,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
     "gfs_seamless": 1.14,
-    "ecmwf_ifs025": 0.83,
+    "ecmwf_ifs025": 0.82,
     "icon_seamless": 0.99,
     "ukmo_seamless": -0.03,
     "gem_seamless": 0.96,
-    "jma_seamless": 0.77
+    "jma_seamless": 0.79
   },
-  "sigmaScale": 3.02,
+  "sigmaScale": 3,
   "sigmaAbs": 1.48,
   "sigmaWeight": 0,
   "min": {},
@@ -44,32 +44,32 @@
       "sigmaWeight": 0.13
     },
     "london": {
-      "sampleDays": 95,
+      "sampleDays": 96,
       "max": {
-        "gfs_seamless": -0.14,
-        "ecmwf_ifs025": 0.51,
+        "gfs_seamless": -0.12,
+        "ecmwf_ifs025": 0.52,
         "icon_seamless": 0.37,
         "ukmo_seamless": 0.24,
-        "gem_seamless": 0.22,
+        "gem_seamless": 0.21,
         "jma_seamless": 1.5
       },
-      "sigmaScale": 1.45,
-      "sigmaAbs": 0.86,
-      "sigmaWeight": 0.19
+      "sigmaScale": 1.44,
+      "sigmaAbs": 0.85,
+      "sigmaWeight": 0.18
     },
     "paris": {
-      "sampleDays": 94,
+      "sampleDays": 95,
       "max": {
-        "gfs_seamless": -0.27,
+        "gfs_seamless": -0.25,
         "ecmwf_ifs025": 1.09,
         "icon_seamless": 0.49,
-        "ukmo_seamless": 0.59,
-        "gem_seamless": 0.56,
-        "jma_seamless": 2.07
+        "ukmo_seamless": 0.6,
+        "gem_seamless": 0.58,
+        "jma_seamless": 2.06
       },
-      "sigmaScale": 1.06,
-      "sigmaAbs": 0.85,
-      "sigmaWeight": 0.39
+      "sigmaScale": 1.05,
+      "sigmaAbs": 0.84,
+      "sigmaWeight": 0.38
     },
     "shenzhen": {
       "sampleDays": 78,

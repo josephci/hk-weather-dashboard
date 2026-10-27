@@ -1,17 +1,11 @@
 {
-  "date": "2026-10-27",
-  "prevCurrent": 26.8,
-  "prevMax": 29.7,
-  "alertedFloors": [
-    29
-  ],
+  "date": "2026-10-28",
+  "prevCurrent": 25.4,
+  "prevMax": 26.2,
+  "alertedFloors": [],
   "approachAlerted": null,
-  "pulledBackAlerted": true,
+  "pulledBackAlerted": false,
   "lastWarnCodes": "",
-  "edgeAlerted": {
-    "24°C": -99,
-    "29°C": 71,
-    "30°C or higher": 29
-  },
+  "edgeAlerted": {},
   "fastAlerted": []
 }

@@ -637,3 +637,4 @@ openedAt,date,city,bucket,side,signal,marketPrice,fillPrice,stake,realizedMax,re
 2026-11-04T21:20:25.097Z,2026-11-04,london,10°C,NO,MODEL_NO,3,5,10,,,
 2026-11-04T21:20:32.469Z,2026-11-05,shenzhen,29°C,YES,MODEL_YES,19,21,10,,,
 2026-11-04T21:20:32.469Z,2026-11-05,shenzhen,30°C,NO,MODEL_NO,40,42,10,,,
+2026-11-05T15:37:57.508Z,2026-11-05,london,10°C,NO,MODEL_NO,3,5,10,,,

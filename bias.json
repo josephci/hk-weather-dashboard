@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T17:54:14.008Z",
+  "generatedAt": "2026-11-09T19:38:50.778Z",
   "sampleDays": 139,
   "note": "bias = mean(實測 - 模型預測)，正數代表模型低估。由daily_log.js自動產生。max=香港(HKO總部);cities=遠程城市(結算口徑=機場METAR整數)。",
   "max": {
@@ -16,73 +16,73 @@
   "min": {},
   "cities": {
     "shanghai": {
-      "sampleDays": 110,
+      "sampleDays": 111,
       "max": {
         "gfs_seamless": 1.35,
         "ecmwf_ifs025": 0.74,
-        "icon_seamless": 1.28,
+        "icon_seamless": 1.27,
         "ukmo_seamless": 0.92,
         "gem_seamless": 0.91,
-        "jma_seamless": 1.83
+        "jma_seamless": 1.82
       },
       "sigmaScale": 1.39,
-      "sigmaAbs": 0.84,
+      "sigmaAbs": 0.83,
       "sigmaWeight": 0.2
     },
     "beijing": {
-      "sampleDays": 109,
+      "sampleDays": 110,
       "max": {
-        "gfs_seamless": -0.14,
-        "ecmwf_ifs025": 1.06,
-        "icon_seamless": 1.27,
-        "ukmo_seamless": 0.91,
-        "gem_seamless": 0.02,
-        "jma_seamless": 0.23
+        "gfs_seamless": -0.13,
+        "ecmwf_ifs025": 1.08,
+        "icon_seamless": 1.28,
+        "ukmo_seamless": 0.93,
+        "gem_seamless": 0.04,
+        "jma_seamless": 0.22
       },
       "sigmaScale": 1.39,
       "sigmaAbs": 1.03,
       "sigmaWeight": 0.07
     },
     "london": {
-      "sampleDays": 113,
+      "sampleDays": 114,
       "max": {
-        "gfs_seamless": -0.13,
-        "ecmwf_ifs025": 0.58,
-        "icon_seamless": 0.35,
-        "ukmo_seamless": 0.23,
+        "gfs_seamless": -0.15,
+        "ecmwf_ifs025": 0.6,
+        "icon_seamless": 0.34,
+        "ukmo_seamless": 0.22,
         "gem_seamless": 0.28,
-        "jma_seamless": 1.41
+        "jma_seamless": 1.42
       },
-      "sigmaScale": 1.46,
+      "sigmaScale": 1.45,
       "sigmaAbs": 0.84,
-      "sigmaWeight": 0.18
+      "sigmaWeight": 0.15
     },
     "paris": {
-      "sampleDays": 112,
+      "sampleDays": 113,
       "max": {
-        "gfs_seamless": -0.25,
-        "ecmwf_ifs025": 1.01,
-        "icon_seamless": 0.47,
-        "ukmo_seamless": 0.54,
-        "gem_seamless": 0.48,
-        "jma_seamless": 1.9
+        "gfs_seamless": -0.29,
+        "ecmwf_ifs025": 0.98,
+        "icon_seamless": 0.45,
+        "ukmo_seamless": 0.5,
+        "gem_seamless": 0.44,
+        "jma_seamless": 1.87
       },
-      "sigmaScale": 1.1,
-      "sigmaAbs": 0.87,
-      "sigmaWeight": 0.36
+      "sigmaScale": 1.2,
+      "sigmaAbs": 0.94,
+      "sigmaWeight": 0.32
     },
     "shenzhen": {
-      "sampleDays": 96,
+      "sampleDays": 97,
       "max": {
-        "gfs_seamless": -1.42,
-        "ecmwf_ifs025": 0.13,
-        "icon_seamless": 0.51,
-        "ukmo_seamless": -0.41,
-        "gem_seamless": -0.39,
-        "jma_seamless": 1.17
+        "gfs_seamless": -1.4,
+        "ecmwf_ifs025": 0.16,
+        "icon_seamless": 0.52,
+        "ukmo_seamless": -0.36,
+        "gem_seamless": -0.33,
+        "jma_seamless": 1.18
       },
-      "sigmaScale": 1.41,
-      "sigmaAbs": 0.86,
+      "sigmaScale": 1.39,
+      "sigmaAbs": 0.91,
       "sigmaWeight": 0
     }
   }

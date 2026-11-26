@@ -826,3 +826,4 @@ openedAt,date,city,bucket,side,signal,marketPrice,fillPrice,stake,realizedMax,re
 2026-11-26T17:47:40.042Z,2026-11-27,beijing,10°C,YES,MODEL_YES,12,14,10,,,
 2026-11-26T17:47:40.042Z,2026-11-27,beijing,11°C,NO,MODEL_NO,54,56,10,,,
 2026-11-26T17:47:40.042Z,2026-11-27,beijing,12°C,NO,MODEL_NO,63,65,10,,,
+2026-11-26T23:52:10.044Z,2026-11-27,hong-kong,27°C,YES,MODEL_YES,3,5,10,,,
